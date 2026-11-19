@@ -94,12 +94,11 @@ say "--- shell exit $?"
 
 say ""
 say "=== dhcp with sudo (macOS asks for your Mac password)"
-IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-say "default interface: ${IFACE:-none}"
-if [ -n "$IFACE" ]; then
-	sudo "$D" dhcp -td --iface "$IFACE" >> "$LOG" 2>&1 < /dev/null
-	say "--- dhcp exit $? (0 or 1 means it ran; 2 means it could not)"
-fi
+# no --iface: dpt picks the first active Ethernet interface itself (the
+# default route may be a VPN tunnel, utun*, which has no DHCP)
+say "default route: $(route -n get default 2>/dev/null | awk '/interface:/{print $2}') (utun* is a VPN, which can stop offers arriving)"
+sudo "$D" dhcp -td >> "$LOG" 2>&1 < /dev/null
+say "--- dhcp exit $? (0 or 1 means it ran; 2 means it could not)"
 
 say ""
 say "SUMMARY: $PASS passed, $FAIL failed (shell and sudo dhcp: read the log)"
