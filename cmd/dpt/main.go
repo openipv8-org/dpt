@@ -8,8 +8,7 @@
 //
 // Test letters go together (t time, d DNS, p ping; none: all three).
 // Options are written the way the system writes them: -tdp -c 3 -w 2 on
-// Linux and macOS, /tdp /c:3 /w:2 on Windows.  The work is done by concomm, the same
-// code as the console's dpt command.
+// Linux and macOS, /tdp /c:3 /w:2 on Windows.
 package main
 
 import (
@@ -20,7 +19,7 @@ import (
 	"runtime"
 
 	"golang.org/x/term"
-	"openipv8.org/concomm"
+	"openipv8.org/dpt/internal/dpt"
 	"openipv8.org/dpt/internal/mel"
 	"openipv8.org/dpt/internal/shell"
 	"openipv8.org/dpt/internal/sysdns"
@@ -36,25 +35,25 @@ const (
 	exitUsage = 3
 )
 
-func style() concomm.DPTArgStyle {
+func style() dpt.DPTArgStyle {
 	if runtime.GOOS == "windows" {
-		return concomm.DPTStyleWindows
+		return dpt.DPTStyleWindows
 	}
-	return concomm.DPTStyleUnix
+	return dpt.DPTStyleUnix
 }
 
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
 	st := style()
-	c, err := concomm.ParseDPTArgs(args, st)
+	c, err := dpt.ParseDPTArgs(args, st)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "dpt: %v\n\n%s", err, concomm.DPTUsage(st, "dpt"))
+		fmt.Fprintf(os.Stderr, "dpt: %v\n\n%s", err, dpt.DPTUsage(st, "dpt"))
 		return exitUsage
 	}
 	switch c.Mode {
 	case "help":
-		fmt.Print(concomm.DPTUsage(st, "dpt"))
+		fmt.Print(dpt.DPTUsage(st, "dpt"))
 		return exitOK
 	case "version":
 		fmt.Printf("dpt %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
@@ -84,15 +83,15 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
 		}
-		r, err := concomm.RunDPTDHCP(ctx, c.Opts)
+		r, err := dpt.RunDPTDHCP(ctx, c.Opts)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "MEL:", err)
 			return exitMEL
 		}
 		if c.JSON {
-			concomm.DPTJSON(os.Stdout, r)
+			dpt.DPTJSON(os.Stdout, r)
 		} else {
-			concomm.RenderDPTDHCP(os.Stdout, r, color)
+			dpt.RenderDPTDHCP(os.Stdout, r, color)
 		}
 		if r.Failed() {
 			return exitFail
@@ -105,7 +104,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return exitMEL
 	}
-	ips, err := concomm.DPTResolve(ctx, c.Target, c.Opts.Family, nil)
+	ips, err := dpt.DPTResolve(ctx, c.Target, c.Opts.Family, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "MEL:", err)
 		return exitMEL
@@ -116,15 +115,15 @@ func run(args []string) int {
 			return exitMEL
 		}
 	}
-	r, err := concomm.RunDPT(ctx, c.Target, c.Opts.DPTOptions)
+	r, err := dpt.RunDPT(ctx, c.Target, c.Opts.DPTOptions)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "MEL:", err)
 		return exitMEL
 	}
 	if c.JSON {
-		concomm.DPTJSON(os.Stdout, r)
+		dpt.DPTJSON(os.Stdout, r)
 	} else {
-		concomm.RenderDPT(os.Stdout, r, color, c.Verbose)
+		dpt.RenderDPT(os.Stdout, r, color, c.Verbose)
 	}
 	if r.Failed() {
 		return exitFail

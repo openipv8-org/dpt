@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"openipv8.org/concomm"
+	"openipv8.org/dpt/internal/dpt"
 )
 
 // fakeDNS answers on loopback UDP: A 192.0.2.7 for anything under
@@ -56,10 +56,10 @@ func fakeDNS(t *testing.T) (string, int) {
 			switch {
 			case !strings.HasSuffix(name, "example.test"):
 				out[3] = 0x83 // NXDOMAIN
-			case qtype == concomm.DNSTypeA:
+			case qtype == dpt.DNSTypeA:
 				rr(qtype, []byte{192, 0, 2, 7})
-			case qtype == concomm.DNSTypeMX:
-				w, _ := concomm.DNSWireName("mx.example.test")
+			case qtype == dpt.DNSTypeMX:
+				w, _ := dpt.DNSWireName("mx.example.test")
 				rr(qtype, append([]byte{0, 10}, w...))
 			}
 			pc.WriteTo(out, from)
@@ -85,7 +85,7 @@ func readName(b []byte, off int) (string, int, error) {
 func newTestShell(t *testing.T) (*Shell, *bytes.Buffer) {
 	srv, port := fakeDNS(t)
 	var out bytes.Buffer
-	s := New(&out, []string{srv}, concomm.DPTDHCPOptions{})
+	s := New(&out, []string{srv}, dpt.DPTDHCPOptions{})
 	s.port = port
 	return s, &out
 }
@@ -138,7 +138,7 @@ func TestSettings(t *testing.T) {
 	for _, l := range []string{"set type=caa", "set class=ch", "set timeout=5", "set retry=3", "set norecurse", "set vc", "set d2", "ntpd=time.example.test"} {
 		s.Do(l)
 	}
-	if concomm.DNSTypeString(s.qtype) != "CAA" || s.qclass != concomm.DNSClassCH || s.timeout.Seconds() != 5 || s.retry != 3 ||
+	if dpt.DNSTypeString(s.qtype) != "CAA" || s.qclass != dpt.DNSClassCH || s.timeout.Seconds() != 5 || s.retry != 3 ||
 		s.recurse || !s.vc || !s.d2 || !s.debug || s.ntpd != "time.example.test" {
 		t.Errorf("%+v", s)
 	}

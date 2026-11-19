@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"openipv8.org/concomm"
+	"openipv8.org/dpt/internal/dpt"
 )
 
 // rootServer is a.root-servers.net, for the root command.
@@ -42,13 +42,13 @@ type Shell struct {
 	defname  bool
 	ntpd     string
 
-	DPT   concomm.DPTDHCPOptions // count, names, references, timeout from the command line
+	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
 	Color bool
 }
 
 // New is a shell whose default server is the system's first.
-func New(out io.Writer, servers []string, o concomm.DPTDHCPOptions) *Shell {
-	s := &Shell{out: out, port: 53, qtype: concomm.DNSTypeA, qclass: concomm.DNSClassIN,
+func New(out io.Writer, servers []string, o dpt.DPTDHCPOptions) *Shell {
+	s := &Shell{out: out, port: 53, qtype: dpt.DNSTypeA, qclass: dpt.DNSClassIN,
 		timeout: 2 * time.Second, retry: 1, recurse: true, search: true, defname: true, DPT: o}
 	if o.Timeout > 0 {
 		s.timeout = o.Timeout
@@ -100,7 +100,7 @@ func (s *Shell) ctx() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt)
 }
 
-func (s *Shell) addr(server string) string { return concomm.DNSServerAddr(server, s.port) }
+func (s *Shell) addr(server string) string { return dpt.DNSServerAddr(server, s.port) }
 
 // shown is a server as nslookup prints it: address#port.
 func (s *Shell) shown(server string) string { return server + "#" + strconv.Itoa(s.port) }
@@ -224,8 +224,8 @@ func (s *Shell) resolveHost(host, via string) (string, error) {
 	ctx, cancel := s.ctx()
 	defer cancel()
 	if via != "" {
-		for _, t := range []uint16{concomm.DNSTypeA, concomm.DNSTypeAAAA} {
-			a, err := concomm.DNSAsk(ctx, s.addr(via), fqdn(host), concomm.DNSAskOptions{Type: t}, s.timeout)
+		for _, t := range []uint16{dpt.DNSTypeA, dpt.DNSTypeAAAA} {
+			a, err := dpt.DNSAsk(ctx, s.addr(via), fqdn(host), dpt.DNSAskOptions{Type: t}, s.timeout)
 			if err != nil {
 				continue
 			}
@@ -267,14 +267,14 @@ func (s *Shell) set(a string) {
 	case "all":
 		s.showAll()
 	case "type", "q", "querytype", "ty":
-		t, ok := concomm.DNSTypeByName(v)
+		t, ok := dpt.DNSTypeByName(v)
 		if !ok {
 			s.printf("*** unknown query type: %s\n", v)
 			return
 		}
 		s.qtype = t
 	case "class", "cl":
-		c, ok := concomm.DNSClassByName(v)
+		c, ok := dpt.DNSClassByName(v)
 		if !ok {
 			s.printf("*** unknown class: %s\n", v)
 			return
@@ -359,7 +359,7 @@ func (s *Shell) showAll() {
 	s.printf("  %svc\t\t%sdebug\t\t%sd2\n", no(s.vc), no(s.debug), no(s.d2))
 	s.printf("  %ssearch\t%srecurse\t%sdefname\n", no(s.search), no(s.recurse), no(s.defname))
 	s.printf("  timeout = %d\tretry = %d\tport = %d\n", int(s.timeout/time.Second), s.retry, s.port)
-	s.printf("  querytype = %s\tclass = %s\n", concomm.DNSTypeString(s.qtype), concomm.DNSClassString(s.qclass))
+	s.printf("  querytype = %s\tclass = %s\n", dpt.DNSTypeString(s.qtype), dpt.DNSClassString(s.qclass))
 	s.printf("  domain = %s\n  srchlist = %s\n", s.domain, strings.Join(s.srchlist, "/"))
 	s.printf("  ntpd = %s\n", ntpd)
 	s.printf("  dpt: count = %d, names = %s, references = %s\n\n", s.count(), strings.Join(s.names(), ","), strings.Join(s.refs(), ","))
@@ -376,14 +376,14 @@ func (s *Shell) names() []string {
 	if len(s.DPT.Names) > 0 {
 		return s.DPT.Names
 	}
-	return concomm.DPTDefaultNames
+	return dpt.DPTDefaultNames
 }
 
 func (s *Shell) refs() []string {
 	if len(s.DPT.NTP) > 0 {
 		return s.DPT.NTP
 	}
-	return concomm.DPTDefaultNTP
+	return dpt.DPTDefaultNTP
 }
 
 // candidates are the names a lookup tries, as nslookup's search rules
@@ -406,12 +406,12 @@ func (s *Shell) candidates(name string) []string {
 	return append(withList, name+".")
 }
 
-func (s *Shell) ask(ctx context.Context, server, name string, t uint16) (*concomm.DNSAnswer, error) {
-	o := concomm.DNSAskOptions{Type: t, Class: s.qclass, NoRecurse: !s.recurse, TCP: s.vc}
+func (s *Shell) ask(ctx context.Context, server, name string, t uint16) (*dpt.DNSAnswer, error) {
+	o := dpt.DNSAskOptions{Type: t, Class: s.qclass, NoRecurse: !s.recurse, TCP: s.vc}
 	var err error
 	for i := 0; i <= s.retry; i++ {
-		var a *concomm.DNSAnswer
-		a, err = concomm.DNSAsk(ctx, s.addr(server), name, o, s.timeout)
+		var a *dpt.DNSAnswer
+		a, err = dpt.DNSAsk(ctx, s.addr(server), name, o, s.timeout)
 		if err == nil {
 			return a, nil
 		}
@@ -433,13 +433,13 @@ func (s *Shell) lookup(name, server string) {
 	t := s.qtype
 	names := s.candidates(name)
 	if ip := net.ParseIP(name); ip != nil {
-		if t == concomm.DNSTypeA || t == concomm.DNSTypeAAAA {
-			t = concomm.DNSTypePTR
+		if t == dpt.DNSTypeA || t == dpt.DNSTypeAAAA {
+			t = dpt.DNSTypePTR
 		}
-		names = []string{concomm.DNSReverseName(ip) + "."}
+		names = []string{dpt.DNSReverseName(ip) + "."}
 	}
 	s.printf("Server:\t\t%s\nAddress:\t%s\n\n", server, s.shown(server))
-	var last *concomm.DNSAnswer
+	var last *dpt.DNSAnswer
 	for _, n := range names {
 		a, err := s.ask(ctx, server, n, t)
 		if err != nil {
@@ -480,25 +480,25 @@ func (s *Shell) lookup(name, server string) {
 }
 
 // record writes one record as nslookup does.
-func (s *Shell) record(r concomm.DNSRecord) {
+func (s *Shell) record(r dpt.DNSRecord) {
 	n := strings.TrimSuffix(r.Name, ".")
-	v := concomm.Safe(concomm.DNSFormatRData(r.Type, r.Data))
+	v := dpt.Safe(dpt.DNSFormatRData(r.Type, r.Data))
 	switch r.Type {
-	case concomm.DNSTypeA, concomm.DNSTypeAAAA:
+	case dpt.DNSTypeA, dpt.DNSTypeAAAA:
 		s.printf("Name:\t%s\nAddress: %s\n", n, v)
-	case concomm.DNSTypeCNAME:
+	case dpt.DNSTypeCNAME:
 		s.printf("%s\tcanonical name = %s\n", n, v)
-	case concomm.DNSTypeMX:
+	case dpt.DNSTypeMX:
 		s.printf("%s\tmail exchanger = %s\n", n, v)
-	case concomm.DNSTypeNS:
+	case dpt.DNSTypeNS:
 		s.printf("%s\tnameserver = %s\n", n, v)
-	case concomm.DNSTypePTR:
+	case dpt.DNSTypePTR:
 		s.printf("%s\tname = %s\n", n, v)
-	case concomm.DNSTypeTXT:
+	case dpt.DNSTypeTXT:
 		s.printf("%s\ttext = %s\n", n, v)
-	case concomm.DNSTypeSRV:
+	case dpt.DNSTypeSRV:
 		s.printf("%s\tservice = %s\n", n, v)
-	case concomm.DNSTypeSOA:
+	case dpt.DNSTypeSOA:
 		f := strings.Fields(v)
 		if len(f) == 7 {
 			s.printf("%s\n\torigin = %s\n\tmail addr = %s\n\tserial = %s\n\trefresh = %s\n\tretry = %s\n\texpire = %s\n\tminimum = %s\n",
@@ -507,12 +507,12 @@ func (s *Shell) record(r concomm.DNSRecord) {
 		}
 		s.printf("%s\tsoa = %s\n", n, v)
 	default:
-		s.printf("%s\t%s = %s\n", n, strings.ToLower(concomm.DNSTypeString(r.Type)), v)
+		s.printf("%s\t%s = %s\n", n, strings.ToLower(dpt.DNSTypeString(r.Type)), v)
 	}
 }
 
 // dump is set debug's view of an answer (and d2's raw octets).
-func (s *Shell) dump(a *concomm.DNSAnswer) {
+func (s *Shell) dump(a *dpt.DNSAnswer) {
 	if s.d2 {
 		s.printf("------------\nSent %d octets:\n%s", len(a.Query), hex.Dump(a.Query))
 		s.printf("Got %d octets (%s):\n%s", len(a.Raw), a.Network, hex.Dump(a.Raw))
@@ -524,15 +524,15 @@ func (s *Shell) dump(a *concomm.DNSAnswer) {
 		s.printf("\tEDNS: version %d, udp %d, do %v\n", a.EDNSVersion, a.EDNSSize, a.DOBit)
 	}
 	s.printf("    time = %.1f ms, %d octets over %s\n", float64(a.Time)/1e6, a.Size, a.Network)
-	s.printf("\n    QUESTIONS:\n\t%s, type = %s, class = %s\n", strings.TrimSuffix(q.Name, "."), concomm.DNSTypeString(q.Type), concomm.DNSClassString(q.Class))
-	sec := func(title string, rs []concomm.DNSRecord) {
+	s.printf("\n    QUESTIONS:\n\t%s, type = %s, class = %s\n", strings.TrimSuffix(q.Name, "."), dpt.DNSTypeString(q.Type), dpt.DNSClassString(q.Class))
+	sec := func(title string, rs []dpt.DNSRecord) {
 		if len(rs) == 0 {
 			return
 		}
 		s.printf("    %s:\n", title)
 		for _, r := range rs {
-			s.printf("    ->  %s\n\t%s = %s\n\tttl = %d\n", strings.TrimSuffix(r.Name, "."), strings.ToLower(concomm.DNSTypeString(r.Type)),
-				concomm.Safe(concomm.DNSFormatRData(r.Type, r.Data)), r.TTL)
+			s.printf("    ->  %s\n\t%s = %s\n\tttl = %d\n", strings.TrimSuffix(r.Name, "."), strings.ToLower(dpt.DNSTypeString(r.Type)),
+				dpt.Safe(dpt.DNSFormatRData(r.Type, r.Data)), r.TTL)
 		}
 	}
 	sec("ANSWERS", a.Answer)
@@ -561,17 +561,17 @@ func (s *Shell) ls(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	rs, err := concomm.DNSZoneTransfer(ctx, s.addr(s.server), fqdn(dom), s.timeout*5)
+	rs, err := dpt.DNSZoneTransfer(ctx, s.addr(s.server), fqdn(dom), s.timeout*5)
 	if err != nil && len(rs) == 0 {
 		s.printf("*** can't list domain %s: %v\n", dom, err)
 		return
 	}
 	s.printf("[%s]\n", s.server)
 	for _, r := range rs {
-		if !all && r.Type != concomm.DNSTypeA && r.Type != concomm.DNSTypeAAAA && r.Type != concomm.DNSTypeNS {
+		if !all && r.Type != dpt.DNSTypeA && r.Type != dpt.DNSTypeAAAA && r.Type != dpt.DNSTypeNS {
 			continue
 		}
-		s.printf(" %-30s %-6s %s\n", strings.TrimSuffix(r.Name, "."), concomm.DNSTypeString(r.Type), concomm.Safe(concomm.DNSFormatRData(r.Type, r.Data)))
+		s.printf(" %-30s %-6s %s\n", strings.TrimSuffix(r.Name, "."), dpt.DNSTypeString(r.Type), dpt.Safe(dpt.DNSFormatRData(r.Type, r.Data)))
 	}
 	if err != nil {
 		s.printf("*** %v\n", err)
@@ -596,10 +596,10 @@ func (s *Shell) host(args []string, i int) (string, string, bool) {
 	return args[i], a, true
 }
 
-func (s *Shell) opts() concomm.DPTOptions {
+func (s *Shell) opts() dpt.DPTOptions {
 	o := s.DPT.DPTOptions
 	o.Timeout = s.timeout
-	o.Resolver = concomm.NewResolver([]string{s.server})
+	o.Resolver = dpt.NewResolver([]string{s.server})
 	return o
 }
 
@@ -625,13 +625,13 @@ func (s *Shell) ping(args []string) {
 	defer cancel()
 	s.printf("PING %s (%s): %d echoes\n", name, ip, o.Count)
 	addr := net.ParseIP(ip)
-	c, err := concomm.OpenICMP(addr)
+	c, err := dpt.OpenICMP(addr)
 	if err != nil {
 		s.printf("MEL: %v\n", err)
 		return
 	}
 	defer c.Close()
-	var replies []concomm.EchoReply
+	var replies []dpt.EchoReply
 	sent := 0
 	for i := 1; i <= o.Count && ctx.Err() == nil; i++ {
 		start := time.Now()
@@ -654,7 +654,7 @@ func (s *Shell) ping(args []string) {
 			}
 		}
 	}
-	st := concomm.PingSummary(sent, replies)
+	st := dpt.PingSummary(sent, replies)
 	s.printf("--- %s ---\n%d sent, %d received, %.0f%% loss", name, st.Sent, st.Received, st.Loss)
 	if st.Received > 0 {
 		s.printf(", rtt min/avg/max/sd %.2f/%.2f/%.2f/%.2f ms", float64(st.Min)/1e6, float64(st.Avg)/1e6, float64(st.Max)/1e6, float64(st.StdDev)/1e6)
@@ -678,8 +678,8 @@ func (s *Shell) time(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	t := concomm.DPTTimeRun(ctx, []concomm.DPTTimeAsk{{Server: host, Role: "target"}}, s.opts())
-	concomm.RenderDPTTime(s.out, t, s.Color)
+	t := dpt.DPTTimeRun(ctx, []dpt.DPTTimeAsk{{Server: host, Role: "target"}}, s.opts())
+	dpt.RenderDPTTime(s.out, t, s.Color)
 	s.printf("\n")
 }
 
@@ -690,12 +690,12 @@ func (s *Shell) dpt(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	r, err := concomm.RunDPT(ctx, name, s.opts())
+	r, err := dpt.RunDPT(ctx, name, s.opts())
 	if err != nil {
 		s.printf("*** %v\n", err)
 		return
 	}
-	concomm.RenderDPT(s.out, r, s.Color, false)
+	dpt.RenderDPT(s.out, r, s.Color, false)
 	s.printf("\n")
 }
 
@@ -708,7 +708,7 @@ func (s *Shell) features(args []string) {
 	defer cancel()
 	o := s.opts()
 	o.Count = 1
-	r, err := concomm.RunDPT(ctx, name, o)
+	r, err := dpt.RunDPT(ctx, name, o)
 	if err != nil {
 		s.printf("*** %v\n", err)
 		return
@@ -751,11 +751,11 @@ func (s *Shell) trydhcp(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	r, err := concomm.RunDPTDHCP(ctx, o)
+	r, err := dpt.RunDPTDHCP(ctx, o)
 	if err != nil {
 		s.printf("MEL: %v\n", err)
 		return
 	}
-	concomm.RenderDPTDHCP(s.out, r, s.Color)
+	dpt.RenderDPTDHCP(s.out, r, s.Color)
 	s.printf("\n")
 }

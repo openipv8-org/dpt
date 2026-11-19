@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: MIT
+
+//go:build linux
+
+package dpt
+
+import (
+	"context"
+	"encoding/binary"
+	"net"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// Linux: the DISCOVER goes out and the offers come in on one packet
+// socket (CAP_NET_RAW), as dhcpcd and nclient4 do: the interface may have
+// no address, and UDP port 68 may belong to the system's DHCP client.
+// The socket sees each offer's source MAC.
+
+func dhcpProbe(ctx context.Context, ifi *net.Interface, xid uint32, discover []byte, listen time.Duration) ([]DHCPOfferSeen, error) {
+	proto := htons(unix.ETH_P_IP)
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, int(proto))
+	if err != nil {
+		if err == unix.EPERM || err == unix.EACCES {
+			return nil, errDHCPProbePriv
+		}
+		return nil, err
+	}
+	defer unix.Close(fd)
+	prog := unix.SockFprog{Len: uint16(len(dhcpBPF)), Filter: &dhcpBPF[0]}
+	if err := unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &prog); err != nil {
+		return nil, err
+	}
+	if err := unix.Bind(fd, &unix.SockaddrLinklayer{Protocol: proto, Ifindex: ifi.Index}); err != nil {
+		return nil, err
+	}
+	pkt := dhcpIPv4UDP(discover)
+	to := &unix.SockaddrLinklayer{Protocol: proto, Ifindex: ifi.Index, Halen: 6}
+	copy(to.Addr[:], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	start := time.Now()
+	if err := unix.Sendto(fd, pkt, 0, to); err != nil {
+		return nil, err
+	}
+	deadline := start.Add(listen)
+	var out []DHCPOfferSeen
+	buf := make([]byte, 2048)
+	for {
+		if ctx.Err() != nil {
+			return out, nil
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return out, nil
+		}
+		ms := int(left / time.Millisecond)
+		if ms < 1 {
+			ms = 1
+		}
+		if ms > 200 {
+			ms = 200 // look at ctx now and then
+		}
+		pfd := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		if k, err := unix.Poll(pfd, ms); err != nil || k == 0 {
+			continue
+		}
+		n, from, err := unix.Recvfrom(fd, buf, unix.MSG_DONTWAIT)
+		if err != nil {
+			continue
+		}
+		src, body, ok := dhcpUDP(buf[:n])
+		if !ok {
+			continue
+		}
+		o := dhcpOfferFor(body, xid)
+		if o == nil {
+			continue
+		}
+		o.SrcIP, o.After = src.IP, time.Since(start)
+		if ll, ok := from.(*unix.SockaddrLinklayer); ok && ll.Halen == 6 {
+			o.SrcMAC = append(net.HardwareAddr(nil), ll.Addr[:6]...)
+		}
+		out = append(out, *o)
+	}
+}
+
+// dhcpIPv4UDP wraps a DHCP message in UDP 68 -> 67 and IPv4 0.0.0.0 ->
+// 255.255.255.255.
+func dhcpIPv4UDP(payload []byte) []byte {
+	ul := 8 + len(payload)
+	b := make([]byte, 20+ul)
+	b[0], b[8], b[9] = 0x45, 64, 17
+	binary.BigEndian.PutUint16(b[2:], uint16(len(b)))
+	copy(b[16:20], []byte{255, 255, 255, 255})
+	binary.BigEndian.PutUint16(b[10:], inetChecksum(b[:20]))
+	u := b[20:]
+	binary.BigEndian.PutUint16(u[0:], 68)
+	binary.BigEndian.PutUint16(u[2:], 67)
+	binary.BigEndian.PutUint16(u[4:], uint16(ul))
+	copy(u[8:], payload)
+	// the UDP checksum over the pseudo-header
+	ph := make([]byte, 0, 12+ul)
+	ph = append(ph, b[12:20]...)
+	ph = append(ph, 0, 17)
+	ph = binary.BigEndian.AppendUint16(ph, uint16(ul))
+	ph = append(ph, u...)
+	cs := inetChecksum(ph)
+	if cs == 0 {
+		cs = 0xffff
+	}
+	binary.BigEndian.PutUint16(u[6:], cs)
+	return b
+}
+
+func htons(v uint16) uint16 { return v<<8 | v>>8 }
+
+// dhcpBPF accepts IPv4 UDP to port 68, not fragmented (the data starts
+// at the IP header: a SOCK_DGRAM packet socket).
+var dhcpBPF = []unix.SockFilter{
+	{Code: 0x30, K: 9},                    // ldb [9]: protocol
+	{Code: 0x15, Jt: 0, Jf: 6, K: 17},     // jeq udp
+	{Code: 0x28, K: 6},                    // ldh [6]: flags and fragment offset
+	{Code: 0x45, Jt: 4, Jf: 0, K: 0x1fff}, // jset fragment offset: drop
+	{Code: 0xb1, K: 0},                    // ldxb 4*([0]&0xf): header length
+	{Code: 0x48, K: 2},                    // ldh [x+2]: destination port
+	{Code: 0x15, Jt: 0, Jf: 1, K: 68},     // jeq 68
+	{Code: 0x06, K: 0xffff},               // accept
+	{Code: 0x06, K: 0},                    // drop
+}
+
+// dhcpUDP is an IPv4 packet's UDP payload to port 68, and its source.
+func dhcpUDP(p []byte) (*net.UDPAddr, []byte, bool) {
+	if len(p) < 20 || p[0]>>4 != 4 {
+		return nil, nil, false
+	}
+	ihl := int(p[0]&0x0f) * 4
+	if ihl < 20 || len(p) < ihl+8 || p[9] != 17 {
+		return nil, nil, false
+	}
+	u := p[ihl:]
+	if binary.BigEndian.Uint16(u[2:4]) != 68 {
+		return nil, nil, false
+	}
+	ul := int(binary.BigEndian.Uint16(u[4:6]))
+	if ul < 8 || ul > len(u) {
+		return nil, nil, false
+	}
+	src := &net.UDPAddr{IP: net.IP(append([]byte(nil), p[12:16]...)), Port: int(binary.BigEndian.Uint16(u[0:2]))}
+	return src, u[8:ul], true
+}

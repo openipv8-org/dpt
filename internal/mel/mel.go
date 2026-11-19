@@ -8,7 +8,7 @@ import (
 	"errors"
 	"net"
 
-	"openipv8.org/concomm"
+	"openipv8.org/dpt/internal/dpt"
 )
 
 // Error is a MEL failure; its text follows "MEL: ".
@@ -57,7 +57,7 @@ func UDP() error {
 
 // ICMP needs an ICMP socket (or handle) towards ip.
 func ICMP(ip net.IP) error {
-	c, err := concomm.OpenICMP(ip)
+	c, err := dpt.OpenICMP(ip)
 	if err != nil {
 		return fail("cannot open ICMP socket — run as root or set net.ipv4.ping_group_range")
 	}
