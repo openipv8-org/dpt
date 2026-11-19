@@ -27,7 +27,7 @@ var DHCPProbeRequested = []byte{1, 2, 3, 4, 6, 12, 15, 26, 28, 33, 42, 43, 44, 5
 type DHCPProbeOptions struct {
 	Iface  string           // the interface to send on (required)
 	MAC    net.HardwareAddr // chaddr; nil: the interface's own
-	Listen time.Duration    // how long to collect offers; 0: 3 s
+	Listen time.Duration    // how long to collect offers; 0: 5 s
 }
 
 // DHCPOfferSeen is one offer, as it arrived.
@@ -136,7 +136,7 @@ func DHCPProbe(ctx context.Context, o DHCPProbeOptions) ([]DHCPOfferSeen, error)
 		return nil, fmt.Errorf("interface %s has no Ethernet address: use a random MAC", o.Iface)
 	}
 	if o.Listen <= 0 {
-		o.Listen = 3 * time.Second
+		o.Listen = 5 * time.Second
 	}
 	var xb [4]byte
 	rand.Read(xb[:])

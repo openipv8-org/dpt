@@ -97,7 +97,7 @@ say "=== dhcp with sudo (macOS asks for your Mac password)"
 IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
 say "default interface: ${IFACE:-none}"
 if [ -n "$IFACE" ]; then
-	sudo "$D" dhcp -td --iface "$IFACE" --random-mac >> "$LOG" 2>&1 < /dev/null
+	sudo "$D" dhcp -td --iface "$IFACE" >> "$LOG" 2>&1 < /dev/null
 	say "--- dhcp exit $? (0 or 1 means it ran; 2 means it could not)"
 fi
 

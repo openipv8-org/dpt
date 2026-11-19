@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,8 +178,14 @@ type DPTTime struct {
 	Rows          []DPTTimeRow `json:"servers"`
 	Reference     string       `json:"reference,omitempty"`
 	MaxDivergence Ms           `json:"max_divergence_ms"`
-	Status        string       `json:"status"`
-	Reason        string       `json:"reason,omitempty"`
+	DivStatus     string       `json:"divergence_status,omitempty"`
+	// LocalOffset is this machine's clock minus the reference servers'
+	// (their median): negative is behind.  LocalStatus judges it with the
+	// same limits; Status is the worse of the two.
+	LocalOffset Ms     `json:"local_clock_offset_ms"`
+	LocalStatus string `json:"local_clock_status,omitempty"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // DPTFeatures is what the address offers.
@@ -507,7 +514,62 @@ func DPTTimeRun(ctx context.Context, extra []DPTTimeAsk, o DPTOptions) DPTTime {
 			t.Status, t.Reason = DPTWarn, "more than 50 ms apart"
 		}
 	}
+	t.DivStatus = t.Status
+	// this machine's clock against the references that are synchronised:
+	// a drifting clock is what makes JWTs fail
+	var offs []time.Duration
+	for i, a := range asks {
+		if a.Role == "reference" && results[i] != nil && !results[i].Unsynchronised() {
+			offs = append(offs, results[i].Offset)
+		}
+	}
+	if len(offs) > 0 {
+		local := -dptMedian(offs) // the servers' offset is theirs minus ours
+		t.LocalOffset = ms(local)
+		abs := local
+		if abs < 0 {
+			abs = -abs
+		}
+		t.LocalStatus = DPTOK
+		switch {
+		case abs > DPTTimeWarn:
+			t.LocalStatus = DPTFail
+		case abs > DPTTimeOK:
+			t.LocalStatus = DPTWarn
+		}
+		if dptRank(t.LocalStatus) > dptRank(t.Status) {
+			t.Status, t.Reason = t.LocalStatus, "this clock is "+dptLocalWords(t.LocalOffset)
+		}
+	}
 	return t
+}
+
+func dptMedian(d []time.Duration) time.Duration {
+	s := slices.Clone(d)
+	slices.Sort(s)
+	n := len(s)
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return s[n/2-1]/2 + s[n/2]/2
+}
+
+func dptRank(s string) int {
+	switch s {
+	case DPTFail:
+		return 2
+	case DPTWarn:
+		return 1
+	}
+	return 0
+}
+
+// dptLocalWords: "52.6 ms behind" / "1.2 ms ahead".
+func dptLocalWords(v Ms) string {
+	if v < 0 {
+		return fms(-v) + " ms behind"
+	}
+	return fms(v) + " ms ahead"
 }
 
 func dptFeatures(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport) DPTFeatures {
@@ -659,7 +721,7 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 		o.Iface = i
 	}
 	if o.Listen <= 0 {
-		o.Listen = 3 * time.Second
+		o.Listen = 5 * time.Second
 	}
 	var mac net.HardwareAddr
 	if o.RandomMAC {
@@ -1004,10 +1066,21 @@ func renderDPTTime(o dptOut, t DPTTime) {
 	if t.Reference == "" {
 		body = "no reference answered"
 	}
-	if t.Reason != "" {
+	st := t.DivStatus
+	if st == "" {
+		st = t.Status
+	}
+	if t.Reason != "" && (t.LocalStatus == "" || !strings.HasPrefix(t.Reason, "this clock")) {
 		body += "  (" + t.Reason + ")"
 	}
-	o.line(sec(), body, t.Status)
+	o.line(sec(), body, st)
+	if t.LocalStatus != "" {
+		of := " "
+		if t.LocalOffset >= 0 {
+			of = " of "
+		}
+		o.line(sec(), "this clock is "+dptLocalWords(t.LocalOffset)+of+"the reference servers", t.LocalStatus)
+	}
 }
 
 func dptFeatureWords(f DPTFeatures) string {

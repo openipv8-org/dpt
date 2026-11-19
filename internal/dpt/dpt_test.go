@@ -436,6 +436,41 @@ func TestDPTTimeRun(t *testing.T) {
 	}
 }
 
+// this machine's clock against the references: a drifting clock is the
+// point, even when the servers agree with each other
+func TestDPTTimeLocalClock(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		ahead  time.Duration // the servers ahead of us
+		status string
+		words  string
+	}{
+		{0, DPTOK, "ms behind the reference servers"},
+		{200 * time.Millisecond, DPTWarn, "200."},
+		{-200 * time.Millisecond, DPTWarn, "ms ahead of the reference servers"},
+		{3 * time.Second, DPTFail, "behind"},
+	} {
+		a := fakeNTP(t, ntpServerAhead(c.ahead, 1, 0))
+		b := fakeNTP(t, ntpServerAhead(c.ahead, 2, 0))
+		tm := DPTTimeRun(ctx, nil, DPTOptions{NTP: []string{a, b}, Timeout: time.Second})
+		if tm.DivStatus != DPTOK || tm.LocalStatus != c.status || tm.Status != c.status {
+			t.Errorf("servers %v ahead: div %s local %s status %s (%s)", c.ahead, tm.DivStatus, tm.LocalStatus, tm.Status, tm.Reason)
+		}
+		var buf bytes.Buffer
+		RenderDPTTime(&buf, tm, false)
+		if !strings.Contains(buf.String(), "this clock is") || !strings.Contains(buf.String(), c.words) {
+			t.Errorf("servers %v ahead, render lacks %q:\n%s", c.ahead, c.words, buf.String())
+		}
+	}
+	// an unsynchronised reference does not count towards our clock
+	a := fakeNTP(t, ntpServerAhead(0, 1, 0))
+	b := fakeNTP(t, ntpServerAhead(5*time.Second, 16, 3))
+	tm := DPTTimeRun(ctx, nil, DPTOptions{NTP: []string{a, b}, Timeout: time.Second})
+	if tm.LocalStatus != DPTOK || tm.Status != DPTFail {
+		t.Errorf("unsynchronised reference: local %s status %s", tm.LocalStatus, tm.Status)
+	}
+}
+
 // ------------------------------------------------------------ the whole run
 
 func TestRunDPTLoopback(t *testing.T) {

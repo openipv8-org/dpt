@@ -50,8 +50,8 @@ var dptOpts = []dptOpt{
 	{"ntp", "", true, "reference NTP servers, a,b (time.google.com,time.windows.com)"},
 	{"all", "", false, "test every address a name resolves to"},
 	{"iface", "", true, "dhcp: the interface to probe (the first active one)"},
-	{"listen", "", true, "dhcp: how long to collect offers (3)"},
-	{"random-mac", "", false, "dhcp: probe with a random MAC instead of the interface's"},
+	{"listen", "", true, "dhcp: how long to collect offers (5)"},
+	{"random-mac", "", false, "dhcp: probe with a random MAC instead of the interface's (some routers' offers then never arrive)"},
 	{"4", "", false, "IPv4 only"},
 	{"6", "", false, "IPv6 only"},
 	{"json", "", false, "one JSON document"},
@@ -91,7 +91,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
 	fmt.Fprintf(&b, "\ntests (letters together, any of them; none: all three):\n")
-	fmt.Fprintf(&b, "  t  time: NTP against %s\n", strings.Join(DPTDefaultNTP, ", "))
+	fmt.Fprintf(&b, "  t  time: NTP against %s, and this machine's clock checked against them\n", strings.Join(DPTDefaultNTP, ", "))
 	fmt.Fprintf(&b, "  d  DNS: use the address as a resolver\n")
 	fmt.Fprintf(&b, "  p  ping: ICMP echo\n")
 	fmt.Fprintf(&b, "  dhcp: every DHCP server on the segment and its offer; t and d test the NTP and DNS servers offered\n")

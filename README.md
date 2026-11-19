@@ -2,8 +2,9 @@
 
 Is this address working as a network peer? One command answers it: ping
 it, use it as a DNS resolver, ask it for the time and compare that with
-public NTP servers. Or look at every DHCP server on the segment and what
-it hands out.
+public NTP servers, and check this machine's own clock against them (a
+drifting clock is what makes JWTs fail). Or look at every DHCP server on
+the segment and what it hands out.
 
 ```
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
@@ -15,7 +16,7 @@ Tests are letters written together; with none, all three run:
 
 | | |
 |---|---|
-| `t` | time: NTP query, compared with time.google.com and time.windows.com (OK ≤ 50 ms, WARN ≤ 1 s, FAIL beyond or unsynchronised) |
+| `t` | time: NTP query, compared with time.google.com and time.windows.com, and this machine's clock checked against them (OK ≤ 50 ms, WARN ≤ 1 s, FAIL beyond or unsynchronised) |
 | `d` | DNS: lookups with the address as the resolver |
 | `p` | ping: ICMP echo |
 
@@ -40,6 +41,7 @@ TIME      time.google.com            +0.2 ms  s1  delay   27.8 ms  .GOOG.
           time.windows.com           -4.5 ms  s4  delay   58.3 ms  86.77.84.80
           1.1.1.1                no NTP service
           max divergence 4.8 ms                                         OK
+          this clock is 2.1 ms behind the reference servers             OK
 FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ```
 
