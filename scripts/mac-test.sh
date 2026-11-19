@@ -90,7 +90,6 @@ run "ping only, verbose" 0 "$D" 8.8.8.8 -p -c 3 --verbose
 run "DNS only on 1.1.1.1" 0 "$D" 1.1.1.1 -d -c 3
 run "time only, time.apple.com as the target" 0 "$D" time.apple.com -t
 run "a name with every IPv4 address" 0 "$D" one.one.one.one -4 --all -c 2
-run "IPv6 ping (fails if this network has no IPv6)" 0 "$D" 2606:4700:4700::1111 -p -c 2
 run "a dead address (must FAIL)" 1 "$D" 192.0.2.1 -p -c 2 -w 1
 run "JSON" 0 "$D" 1.1.1.1 -tdp -c 2 --json
 run "dhcp without root (must refuse)" 2 "$D" dhcp
