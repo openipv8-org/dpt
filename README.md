@@ -24,6 +24,10 @@ Tests are letters written together; with none, all three run:
 too) without taking a lease; `t` and `d` then test the NTP and DNS
 servers the offers name. It probes the Ethernet interface with the
 LAN gateway (never a VPN tunnel) unless `--iface` names one.
+On Linux and macOS it sends and listens below UDP (packet socket,
+/dev/bpf), so the system's DHCP client cannot take the offers first.
+When a VPN tunnel is up it says so in red: `A VPN TUNNEL IS UP (utun3):
+dhcp might not work on en1`.
 
 It needs sudo (Linux: or CAP_NET_RAW) or an Administrator prompt.
 Typed at a terminal, dpt asks for it itself: it runs sudo (the password

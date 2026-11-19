@@ -673,11 +673,14 @@ type DPTDHCPReport struct {
 	Servers  []DPTDHCPServer `json:"servers"`
 	Multiple bool            `json:"multiple_servers"`
 	Note     string          `json:"note,omitempty"`
-	DNS      []DPTDHCPCheck  `json:"dns,omitempty"`
-	DNSState string          `json:"dns_status,omitempty"`
-	Time     *DPTTime        `json:"time,omitempty"`
-	Status   string          `json:"status"`
-	Started  time.Time       `json:"started"`
+	// VPN names the VPN tunnels that are up: the system may send the
+	// probe's answers, or the probe itself, through one
+	VPN      []string       `json:"vpn_tunnel,omitempty"`
+	DNS      []DPTDHCPCheck `json:"dns,omitempty"`
+	DNSState string         `json:"dns_status,omitempty"`
+	Time     *DPTTime       `json:"time,omitempty"`
+	Status   string         `json:"status"`
+	Started  time.Time      `json:"started"`
 }
 
 // Failed is true when a test failed (exit code 1).
@@ -720,10 +723,27 @@ func DPTDefaultIface() (string, error) {
 	return cands[0].Name, nil
 }
 
-func dptProbeable(i net.Interface) bool {
-	if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || len(i.HardwareAddr) != 6 {
-		return false
+// DPTVPNTunnels names the interfaces that look like a VPN tunnel that is
+// up: up, not a loopback, no Ethernet address, and a real IPv4 address
+// (macOS's idle utun0-2 have only IPv6 link-local addresses).
+func DPTVPNTunnels() []string {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return nil
 	}
+	var out []string
+	for _, i := range ifs {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || len(i.HardwareAddr) == 6 {
+			continue
+		}
+		if dptHasIPv4(i) {
+			out = append(out, i.Name)
+		}
+	}
+	return out
+}
+
+func dptHasIPv4(i net.Interface) bool {
 	addrs, _ := i.Addrs()
 	for _, a := range addrs {
 		if n, ok := a.(*net.IPNet); ok {
@@ -733,6 +753,13 @@ func dptProbeable(i net.Interface) bool {
 		}
 	}
 	return false
+}
+
+func dptProbeable(i net.Interface) bool {
+	if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || len(i.HardwareAddr) != 6 {
+		return false
+	}
+	return dptHasIPv4(i)
 }
 
 // RunDPTDHCP probes the segment and tests what the offers name.
@@ -754,7 +781,7 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 	} else if ifi, err := net.InterfaceByName(o.Iface); err == nil {
 		mac = ifi.HardwareAddr
 	}
-	rep := &DPTDHCPReport{Iface: o.Iface, MAC: mac.String(), Listen: ms(o.Listen), Started: time.Now()}
+	rep := &DPTDHCPReport{Iface: o.Iface, MAC: mac.String(), Listen: ms(o.Listen), Started: time.Now(), VPN: DPTVPNTunnels()}
 	offers, err := DHCPProbe(ctx, DHCPProbeOptions{Iface: o.Iface, MAC: mac, Listen: o.Listen})
 	if err != nil {
 		return nil, err
@@ -959,6 +986,13 @@ func (o dptOut) status(s string) string {
 	return s
 }
 
+func (o dptOut) red(s string) string {
+	if !o.color {
+		return s
+	}
+	return "\x1b[1;31m" + s + "\x1b[0m"
+}
+
 func (o dptOut) line(section, body, status string) {
 	l := fmt.Sprintf("%-10s%s", section, body)
 	if status != "" {
@@ -1135,6 +1169,9 @@ func dptFeatureWords(f DPTFeatures) string {
 func RenderDPTDHCP(w io.Writer, r *DPTDHCPReport, color bool) {
 	o := dptOut{w: w, color: color}
 	o.line("DHCP", fmt.Sprintf("%s  client %s  listened %s ms", r.Iface, r.MAC, fms(r.Listen)), "")
+	if len(r.VPN) > 0 {
+		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+"): dhcp might not work on "+r.Iface), "")
+	}
 	if r.Multiple {
 		o.line("", "WARNING: multiple DHCP servers on "+r.Iface, "")
 	}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-//go:build darwin || windows
+//go:build windows
 
 package dpt
 
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// macOS and Windows: a UDP socket on port 68 (SO_REUSEADDR, sharing it
+// Windows: a UDP socket on port 68 (SO_REUSEADDR, sharing it
 // with the system's DHCP client), sending out of the interface asked.
 // Offers come back broadcast (the flag is set), so the socket hears them
 // unless the system's client takes them first: Windows gives a shared
