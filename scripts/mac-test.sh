@@ -1,9 +1,10 @@
 #!/bin/bash
 # mac-test.sh - test dpt on this Mac and send the log to the dev VM.
-# Get it with git, once:
-#   git clone https://github.com/openipv8-org/dpt ~/dev/dpt
-# then (pullall.sh keeps ~/dev/dpt up to date):
-#   bash ~/dev/dpt/scripts/mac-test.sh
+# Get it with git (public: no login), once:
+#   git clone https://github.com/openipv8-org/dpt ~/dpt
+# and run it:
+#   bash ~/dpt/scripts/mac-test.sh
+# Later, for the newest version first:  git -C ~/dpt pull
 #
 # 1. The program: built from this checkout when Go is installed,
 #    otherwise the release binary for this Mac (Apple Silicon or Intel)
@@ -13,11 +14,11 @@
 #    real probe; macOS asks for your Mac password once).
 # 3. Copies the log to the dev VM (~/ipv8dev/testlogs/dpt-mac-test.log);
 #    scp asks for the VM password.
-# Nothing is installed; everything stays in ~/dev/dpt-mac-test/.
+# Nothing is installed; everything stays in ~/dpt-mac-test/.
 set -u
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-DIR="$HOME/dev/dpt-mac-test"
+DIR="$HOME/dpt-mac-test"
 LOG="$DIR/dpt-mac-test.log"
 mkdir -p "$DIR" && cd "$DIR" || exit 1
 : > "$LOG"
