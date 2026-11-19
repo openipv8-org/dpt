@@ -393,7 +393,7 @@ func TestParseDPTArgs(t *testing.T) {
 	for _, st := range []DPTArgStyle{DPTStyleWindows, DPTStyleUnix} {
 		u := DPTUsage(st, "dpt")
 		want := map[DPTArgStyle]string{DPTStyleWindows: "/c:<v>, /count:<v>", DPTStyleUnix: "-c <v>, --count <v>"}[st]
-		if !strings.Contains(u, want) || !strings.Contains(u, "dhcp|<address>|<dnsname>") {
+		if !strings.Contains(u, want) || !strings.Contains(u, "dhcp|<address>|<dnsname>") || !strings.Contains(u, "Authors: Jamie Thain and Claude Opus 5.5 (Anthropic)") {
 			t.Errorf("usage %d lacks %q:\n%s", st, want, u)
 		}
 	}

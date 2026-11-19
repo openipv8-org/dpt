@@ -49,4 +49,4 @@ Go 1.23 or later, no C compiler: `make dist` builds
 `dist/dpt-<os>-<arch>[.exe]` for Linux, macOS and Windows on amd64 and
 arm64, and `dist/SHA256SUMS`. `make test` runs the tests.
 
-MIT licence.
+Authors: Jamie Thain and Claude Opus 5.5 (Anthropic). MIT licence.

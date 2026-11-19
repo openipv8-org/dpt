@@ -111,8 +111,12 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 		b.WriteString("  /?                         this help\n")
 	}
 	b.WriteString("\nexit codes: 0 all OK, 1 a test failed, 2 minimum execution level not met, 3 bad usage\n")
+	b.WriteString("\n" + DPTAuthors + "\n")
 	return b.String()
 }
+
+// DPTAuthors is shown with every help.
+const DPTAuthors = "Authors: Jamie Thain and Claude Opus 5.5 (Anthropic).  MIT licence.  https://github.com/openipv8-org/dpt"
 
 func dptFind(name string) (dptOpt, bool) {
 	for _, o := range dptOpts {
