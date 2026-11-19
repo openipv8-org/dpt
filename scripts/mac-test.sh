@@ -10,8 +10,8 @@
 #    Intel) from github.com/openipv8-org/dpt and checks it against
 #    SHA256SUMS.  Nothing is built.
 # 2. Runs the tests: help, version, bad usage, ping, DNS, time, JSON,
-#    the shell, and dhcp (without root: must refuse; with sudo: the
-#    real probe; macOS asks for your Mac password once).
+#    the shell, and dhcp (from a script: must refuse without asking;
+#    typed: dpt runs sudo itself, macOS asks for your Mac password).
 # 3. Copies the log to the dev VM (~/ipv8dev/testlogs/dpt-mac-test.log);
 #    scp asks for the VM password.
 # The program is left in the checkout as ~/dpt/dpt (run it: ~/dpt/dpt 1.1.1.1),
@@ -85,7 +85,7 @@ run "time only, time.apple.com as the target" 0 "$D" time.apple.com -t
 run "a name with every IPv4 address" 0 "$D" one.one.one.one -4 --all -c 2
 run "a dead address (must FAIL)" 1 "$D" 192.0.2.1 -p -c 2 -w 1
 run "JSON" 0 "$D" 1.1.1.1 -tdp -c 2 --json
-run "dhcp without root (must refuse)" 2 "$D" dhcp
+run "dhcp from a script (must not ask; says it needs sudo)" 2 "$D" dhcp
 
 say ""
 say "=== shell"
@@ -93,12 +93,16 @@ printf 'set type=mx\nietf.org\nset type=a\ngoogle.com 1.1.1.1\n8.8.8.8\nset all\
 say "--- shell exit $?"
 
 say ""
-say "=== dhcp with sudo (macOS asks for your Mac password)"
-# no --iface: dpt picks the first active Ethernet interface itself (the
-# default route may be a VPN tunnel, utun*, which has no DHCP)
+say "=== dhcp typed at a terminal: dpt runs sudo itself (macOS asks for your Mac password)"
+# no --iface: dpt picks the Ethernet interface with the LAN gateway
+# (the default route may be a VPN tunnel, utun*, which has no DHCP)
 say "default route: $(route -n get default 2>/dev/null | awk '/interface:/{print $2}') (utun* is a VPN, which can stop offers arriving)"
-sudo "$D" dhcp -td >> "$LOG" 2>&1 < /dev/null
-say "--- dhcp exit $? (0 or 1 means it ran; 2 means it could not)"
+# script(1) gives dpt a terminal, as if typed; it records what it shows
+script -q "$DIR/dhcp.out" "$D" dhcp -td
+DX=$?
+tr -d '\r' < "$DIR/dhcp.out" | sed "s/$(printf '\033')\[[0-9;]*m//g" >> "$LOG"
+rm -f "$DIR/dhcp.out"
+say "--- dhcp exit $DX (0 or 1 means it ran; 2 means it could not)"
 
 say ""
 say "SUMMARY: $PASS passed, $FAIL failed (shell and sudo dhcp: read the log)"

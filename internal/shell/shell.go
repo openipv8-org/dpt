@@ -195,7 +195,7 @@ dpt:
   ping [host] [count]     ICMP echo (default the current server, 5)
   time [host]             NTP time of host (default ntpd, else the server) against the references
   ntpd=<server>           the server time asks (set ntpd= clears it)
-  trydhcp [iface]         probe the segment for DHCP servers (needs root/Administrator)
+  trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
   help, ?                 this list

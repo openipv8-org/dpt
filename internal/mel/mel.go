@@ -12,11 +12,21 @@ import (
 )
 
 // Error is a MEL failure; its text follows "MEL: ".
-type Error struct{ Msg string }
+type Error struct {
+	Msg  string
+	Priv bool // more privilege would get past it
+}
 
 func (e *Error) Error() string { return "MEL: " + e.Msg }
 
 func fail(m string) error { return &Error{Msg: m} }
+
+// NeedsPrivilege: err is a MEL failure that sudo (or an Administrator
+// prompt) would get past.
+func NeedsPrivilege(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Priv
+}
 
 // Is tells a MEL failure from other errors.
 func Is(err error) bool {
@@ -59,7 +69,7 @@ func UDP() error {
 func ICMP(ip net.IP) error {
 	c, err := dpt.OpenICMP(ip)
 	if err != nil {
-		return fail("cannot open ICMP socket — run as root or set net.ipv4.ping_group_range")
+		return fail("cannot open ICMP socket: needs sudo, or set net.ipv4.ping_group_range")
 	}
 	c.Close()
 	return nil
@@ -74,7 +84,7 @@ func DHCP(iface string) error {
 		}
 	}
 	if !dhcpPrivileged() {
-		return fail("dhcp requires root/Administrator")
+		return &Error{Msg: "dhcp needs " + dpt.DHCPNeeds, Priv: true}
 	}
 	return nil
 }

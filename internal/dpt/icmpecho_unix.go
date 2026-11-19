@@ -30,7 +30,7 @@ func (c *ICMPConn) open() error {
 		fd, rerr = unix.Socket(family, unix.SOCK_RAW|sockCloexec(), proto)
 		if rerr != nil {
 			if runtime.GOOS == "linux" {
-				return errors.New("cannot open ICMP socket — run as root or set net.ipv4.ping_group_range")
+				return errors.New("cannot open ICMP socket: needs sudo, or set net.ipv4.ping_group_range")
 			}
 			return errors.New("cannot open ICMP socket: " + err.Error())
 		}

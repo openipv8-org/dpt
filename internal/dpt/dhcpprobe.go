@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -145,7 +146,10 @@ func DHCPProbe(ctx context.Context, o DHCPProbeOptions) ([]DHCPOfferSeen, error)
 }
 
 // errDHCPProbePriv is the probe without the privilege it needs.
-var errDHCPProbePriv = errors.New("the DHCP probe requires root/Administrator")
+// DHCPNeeds is what the probe needs, in the system's words.
+var DHCPNeeds = map[bool]string{true: "an Administrator prompt", false: "sudo"}[runtime.GOOS == "windows"]
+
+var errDHCPProbePriv = errors.New("dhcp needs " + DHCPNeeds)
 
 // DHCPOptionValue writes an option's data the way an operator reads it;
 // options it does not know are hex.

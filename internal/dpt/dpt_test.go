@@ -552,3 +552,27 @@ func TestRunDPTSelected(t *testing.T) {
 		t.Errorf("render:\n%s", buf.String())
 	}
 }
+
+// the interface the probe picks has a real IPv4 address, and is the one
+// with the gateway when there is one
+func TestDPTDefaultIface(t *testing.T) {
+	name, err := DPTDefaultIface()
+	if err != nil {
+		t.Skip("no interface here:", err)
+	}
+	i, err := net.InterfaceByName(name)
+	if err != nil || !dptProbeable(*i) {
+		t.Fatalf("%s is not probeable", name)
+	}
+	if gw := gatewayIfaces(); len(gw) > 0 {
+		any := false
+		ifs, _ := net.Interfaces()
+		for _, c := range ifs {
+			any = any || gw[c.Index] && dptProbeable(c)
+		}
+		if any && !gw[i.Index] {
+			t.Errorf("%s chosen, not the gateway's interface %v", name, gw)
+		}
+	}
+	t.Logf("chose %s", name)
+}

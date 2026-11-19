@@ -21,7 +21,7 @@ import (
 
 // DHCPProbeNote is what to tell the operator when no offer came on this
 // platform: it may be the platform, not the segment.
-const DHCPProbeNote = "no offers heard: on this system the DHCP client service may have taken them (Windows: Npcap is not used yet)"
+const DHCPProbeNote = "no offers heard: the system's own DHCP client may have taken them, or a VPN blocked them"
 
 func dhcpProbe(ctx context.Context, ifi *net.Interface, xid uint32, discover []byte, listen time.Duration) ([]DHCPOfferSeen, error) {
 	lc := net.ListenConfig{Control: func(network, address string, c syscall.RawConn) error {

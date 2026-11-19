@@ -17,9 +17,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 
 	"golang.org/x/term"
 	"openipv8.org/dpt/internal/dpt"
+	"openipv8.org/dpt/internal/elevate"
 	"openipv8.org/dpt/internal/mel"
 	"openipv8.org/dpt/internal/shell"
 	"openipv8.org/dpt/internal/sysdns"
@@ -45,6 +47,16 @@ func style() dpt.DPTArgStyle {
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
+	// the elevated copy on Windows: its output goes back to the window the
+	// command was typed in
+	relayed, relayColor := false, false
+	if len(args) > 0 && strings.HasPrefix(args[0], elevate.RelayFlag) {
+		c, err := elevate.Relay(strings.TrimPrefix(args[0], elevate.RelayFlag))
+		if err != nil {
+			return exitMEL
+		}
+		relayed, relayColor, args = true, c, args[1:]
+	}
 	st := style()
 	c, err := dpt.ParseDPTArgs(args, st)
 	if err != nil {
@@ -60,6 +72,9 @@ func run(args []string) int {
 		return exitOK
 	}
 	color := !c.NoColor && !c.JSON && term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
+	if relayed {
+		color = relayColor && !c.NoColor && !c.JSON
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -80,6 +95,16 @@ func run(args []string) int {
 
 	case "dhcp":
 		if err := firstErr(mel.Interface(false), mel.DHCP(c.Opts.Iface), mel.UDP()); err != nil {
+			// typed by a person: ask for the privilege (sudo, UAC); from
+			// a script: never ask, say what it needs
+			if mel.NeedsPrivilege(err) && !relayed && elevate.Possible() && elevate.Interactive() {
+				code, eerr := elevate.Run(args, color)
+				if eerr == nil {
+					return code
+				}
+				fmt.Fprintf(os.Stderr, "%v (%v)\n", err, eerr)
+				return exitMEL
+			}
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
 		}

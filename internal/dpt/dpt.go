@@ -693,21 +693,46 @@ type DPTDHCPOptions struct {
 	Listen    time.Duration
 }
 
-// DPTDefaultIface is the first interface that is up, not a loopback and
-// has an Ethernet address.
+// DPTDefaultIface is the interface a DHCP probe goes out of when none is
+// named: up, not a loopback, an Ethernet address and a real IPv4 address
+// (not 169.254); of those, one with an IPv4 default gateway first.  A VPN
+// tunnel has no Ethernet address, so it is never chosen.
 func DPTDefaultIface() (string, error) {
 	ifs, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
+	var cands []net.Interface
 	for _, i := range ifs {
-		if i.Flags&net.FlagUp != 0 && i.Flags&net.FlagLoopback == 0 && len(i.HardwareAddr) == 6 {
-			if addrs, _ := i.Addrs(); len(addrs) > 0 {
-				return i.Name, nil
+		if dptProbeable(i) {
+			cands = append(cands, i)
+		}
+	}
+	if len(cands) == 0 {
+		return "", errors.New("no active Ethernet interface with an IPv4 address")
+	}
+	gw := gatewayIfaces()
+	for _, i := range cands {
+		if gw[i.Index] {
+			return i.Name, nil
+		}
+	}
+	return cands[0].Name, nil
+}
+
+func dptProbeable(i net.Interface) bool {
+	if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || len(i.HardwareAddr) != 6 {
+		return false
+	}
+	addrs, _ := i.Addrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			if v4 := n.IP.To4(); v4 != nil && !v4.IsLinkLocalUnicast() && !v4.IsLoopback() {
+				return true
 			}
 		}
 	}
-	return "", errors.New("no active network interface")
+	return false
 }
 
 // RunDPTDHCP probes the segment and tests what the offers name.

@@ -22,8 +22,14 @@ Tests are letters written together; with none, all three run:
 
 `dpt dhcp` sends one DHCPDISCOVER and shows every offer (rogue servers
 too) without taking a lease; `t` and `d` then test the NTP and DNS
-servers the offers name. It needs root (Linux: or CAP_NET_RAW) or
-Administrator.
+servers the offers name. It probes the Ethernet interface with the
+LAN gateway (never a VPN tunnel) unless `--iface` names one.
+
+It needs sudo (Linux: or CAP_NET_RAW) or an Administrator prompt.
+Typed at a terminal, dpt asks for it itself: it runs sudo (the password
+is asked in the same window), or on Windows asks UAC and prints the
+elevated run's output in the same window. From a script it never asks:
+it says `MEL: dhcp needs sudo` and exits 2.
 
 Options: `-c` / `/c:` count (5), `-w` / `/w:` timeout in seconds (2),
 `--names`, `--ntp`, `--all`, `--iface`, `--listen`, `--random-mac`,
