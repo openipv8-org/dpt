@@ -6,21 +6,22 @@
 #   bash ~/dpt/scripts/mac-test.sh
 # Later, for the newest version first:  git -C ~/dpt pull
 #
-# 1. The program: built from this checkout when Go is installed,
-#    otherwise the release binary for this Mac (Apple Silicon or Intel)
-#    from github.com/openipv8-org/dpt, checked against SHA256SUMS.
+# 1. Downloads the latest release of dpt for this Mac (Apple Silicon or
+#    Intel) from github.com/openipv8-org/dpt and checks it against
+#    SHA256SUMS.  Nothing is built.
 # 2. Runs the tests: help, version, bad usage, ping, DNS, time, JSON,
 #    the shell, and dhcp (without root: must refuse; with sudo: the
 #    real probe; macOS asks for your Mac password once).
 # 3. Copies the log to the dev VM (~/ipv8dev/testlogs/dpt-mac-test.log);
 #    scp asks for the VM password.
-# Nothing is installed; everything stays in ~/dpt-mac-test/.
+# The program is left in the checkout as ~/dpt/dpt (run it: ~/dpt/dpt 1.1.1.1),
+# the log as ~/dpt/mac-test.log.
 set -u
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-DIR="$HOME/dpt-mac-test"
-LOG="$DIR/dpt-mac-test.log"
-mkdir -p "$DIR" && cd "$DIR" || exit 1
+DIR="$REPO"
+LOG="$DIR/mac-test.log"
+cd "$DIR" || exit 1
 : > "$LOG"
 
 case "$(uname -m)" in
@@ -55,31 +56,23 @@ run() {
 say "dpt Mac test  $(date)"
 say "macOS $(sw_vers -productVersion) $(uname -m)"
 
-say "checkout: $(git -C "$REPO" log --oneline -1 2>/dev/null)"
-if command -v go >/dev/null; then
-	say "building from the checkout with $(go version)"
-	(cd "$REPO" && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o "$DIR/$BIN" ./cmd/dpt) >> "$LOG" 2>&1 || {
-		say "build FAILED"
-		exit 1
-	}
-	say "built OK"
-	(cd "$REPO" && go test ./...) >> "$LOG" 2>&1 && say "go test: PASS" || say "go test: FAIL"
+say "downloading $BIN from the latest release"
+curl -fsSL -o "$BIN" "$URL/$BIN" && curl -fsSL -o SHA256SUMS "$URL/SHA256SUMS" || {
+	say "download failed from $URL"
+	exit 1
+}
+if grep " $BIN\$" SHA256SUMS | shasum -a 256 -c - >> "$LOG" 2>&1; then
+	say "checksum OK"
+	mv -f "$BIN" dpt
+	rm -f SHA256SUMS
 else
-	say "no Go here: the release binary instead"
-	curl -fsSL -o "$BIN" "$URL/$BIN" && curl -fsSL -o SHA256SUMS "$URL/SHA256SUMS" || {
-		say "download failed from $URL"
-		exit 1
-	}
-	if grep " $BIN\$" SHA256SUMS | shasum -a 256 -c - >> "$LOG" 2>&1; then
-		say "checksum OK"
-	else
-		say "checksum FAILED: not running it"
-		exit 1
-	fi
+	say "checksum FAILED: not running it"
+	rm -f "$BIN" SHA256SUMS
+	exit 1
 fi
-chmod +x "$BIN"
-xattr -d com.apple.quarantine "$BIN" 2>/dev/null
-D="./$BIN"
+chmod +x dpt
+xattr -d com.apple.quarantine dpt 2>/dev/null
+D="./dpt"
 
 run "version" 0 "$D" --version
 run "help" 0 "$D" --help
@@ -110,7 +103,7 @@ fi
 
 say ""
 say "SUMMARY: $PASS passed, $FAIL failed (shell and sudo dhcp: read the log)"
-say "log: $LOG"
+say "program: $DIR/dpt   log: $LOG"
 
 echo
 echo "Copying the log to the dev VM (asks for the VM password)..."

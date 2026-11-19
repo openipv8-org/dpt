@@ -46,12 +46,12 @@ FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ## Test on a Mac
 
 ```
-git clone https://github.com/openipv8-org/dpt
-bash dpt/scripts/mac-test.sh
+git clone https://github.com/openipv8-org/dpt ~/dpt
+bash ~/dpt/scripts/mac-test.sh
 ```
 
-Builds from the checkout when Go is installed (otherwise uses the release
-binary), runs the checks and writes a log.
+Downloads the latest release for the Mac into the checkout as `dpt`
+(run it as `~/dpt/dpt`), runs the checks and writes `mac-test.log`.
 
 ## Build
 
