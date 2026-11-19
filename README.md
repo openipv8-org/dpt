@@ -43,6 +43,16 @@ TIME      time.google.com            +0.2 ms  s1  delay   27.8 ms  .GOOG.
 FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ```
 
+## Test on a Mac
+
+```
+git clone https://github.com/openipv8-org/dpt
+bash dpt/scripts/mac-test.sh
+```
+
+Builds from the checkout when Go is installed (otherwise uses the release
+binary), runs the checks and writes a log.
+
 ## Build
 
 Go 1.23 or later, no C compiler: `make dist` builds
