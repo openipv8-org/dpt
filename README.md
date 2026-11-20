@@ -82,18 +82,6 @@ curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/insta
 Run it again to update. Windows: `dpt-windows-amd64.exe` (or `-arm64`)
 from the release page.
 
-## Test on Windows
-
-In PowerShell (a normal one, not "Run as administrator"):
-
-```
-irm https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/windows-test.ps1 | iex
-```
-
-It downloads the latest release into `%USERPROFILE%\dpt\dpt.exe`, checks
-it, runs the tests, asks two questions about the UAC run, and puts the
-log on the clipboard.
-
 ## Test on a Mac
 
 ```
