@@ -35,6 +35,7 @@ type DPTCommand struct {
 	JSON    bool
 	NoColor bool
 	Verbose bool
+	Select  bool // choose the interface from a list
 }
 
 type dptOpt struct {
@@ -51,6 +52,7 @@ var dptOpts = []dptOpt{
 	{"all", "", false, "test every address a name resolves to"},
 	{"iface", "", true, "dhcp: the interface to probe (the Ethernet one with the LAN gateway)"},
 	{"listen", "", true, "dhcp: how long to collect offers (5)"},
+	{"select", "", false, "dhcp, info: list the interfaces and choose one"},
 	{"random-mac", "", false, "dhcp: probe with a random MAC instead of the interface's (some routers' offers then never arrive)"},
 	{"4", "", false, "IPv4 only"},
 	{"6", "", false, "IPv6 only"},
@@ -228,6 +230,14 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 	switch c.Mode {
 	case "help", "version":
 		return c, nil
+	}
+	if c.Select && c.Mode != "dhcp" && c.Mode != "info" {
+		return nil, errors.New(dptOptName(st, "select") + " goes with dhcp or info")
+	}
+	if c.Select && c.Opts.Iface != "" {
+		return nil, fmt.Errorf("%s or %s, not both", dptOptName(st, "select"), dptOptName(st, "iface"))
+	}
+	switch c.Mode {
 	case "info":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
@@ -296,6 +306,8 @@ func (c *DPTCommand) set(long, v string, st DPTArgStyle) error {
 		c.Opts.All = true
 	case "random-mac":
 		c.Opts.RandomMAC = true
+	case "select":
+		c.Select = true
 	case "4":
 		c.Opts.Family = 4
 	case "6":

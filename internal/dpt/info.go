@@ -62,14 +62,15 @@ const (
 	leaseNone      = "no DHCP lease found: a static address?"
 )
 
-// DPTInfoGather reads the machine; dns is the system's resolvers.
-func DPTInfoGather(dns []string) *DPTInfo {
+// DPTInfoGather reads the machine; dns is the system's resolvers.  With
+// iface, only that interface is shown (with an address or not).
+func DPTInfoGather(dns []string, iface string) *DPTInfo {
 	r := &DPTInfo{DNS: dns, DNSSource: infoDNSSource(), VPN: DPTVPNTunnels()}
 	r.NTP, r.NTPSource = infoNTP()
 	gw := gateways()
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
-		if !dptProbeable(i) {
+		if iface != "" && i.Name != iface || iface == "" && !dptProbeable(i) {
 			continue
 		}
 		x := DPTInfoIface{Name: i.Name, MAC: i.HardwareAddr.String()}

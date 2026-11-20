@@ -22,6 +22,8 @@ const rootServer = "198.41.0.4"
 
 // Shell is the interactive mode's state: nslookup's settings and dpt's.
 type Shell struct {
+	iface  string // the interface chosen with interface; "" dpt chooses
+	lr     *lineReader
 	sysDNS []string // the system's resolvers, for info
 	out    io.Writer
 
@@ -66,6 +68,7 @@ func (s *Shell) printf(f string, a ...any) { fmt.Fprintf(s.out, f, a...) }
 // Run reads commands from in until exit or end of input.
 func (s *Shell) Run(in *os.File) error {
 	lr := newLineReader(in, s.out, HistoryFile())
+	s.lr = lr
 	if s.server == "" {
 		s.printf("*** no DNS server found: use server <address>\n")
 	} else {
@@ -93,6 +96,9 @@ func (s *Shell) prompt() string {
 	}
 	if srv == "" {
 		srv = "none"
+	}
+	if s.iface != "" {
+		srv += " " + s.iface
 	}
 	return "dpt [" + srv + "]> "
 }
@@ -154,7 +160,9 @@ func (s *Shell) Do(line string) bool {
 	case cmd == "trydhcp":
 		s.trydhcp(args)
 	case cmd == "info":
-		dpt.RenderDPTInfo(s.out, dpt.DPTInfoGather(s.sysDNS), s.Color)
+		dpt.RenderDPTInfo(s.out, dpt.DPTInfoGather(s.sysDNS, s.iface), s.Color)
+	case cmd == "interface":
+		s.chooseIface(args)
 	case cmd == "dpt":
 		s.dpt(args)
 	case cmd == "features":
@@ -201,6 +209,7 @@ dpt:
   ntpd=<server>           the server time asks (set ntpd= clears it)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
   info                    this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)
+  interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
   help, ?                 this list
@@ -751,6 +760,9 @@ func (s *Shell) features(args []string) {
 func (s *Shell) trydhcp(args []string) {
 	o := s.DPT
 	o.Timeout = s.timeout
+	if s.iface != "" {
+		o.Iface = s.iface
+	}
 	if len(args) > 0 {
 		o.Iface = args[0]
 	}
@@ -763,4 +775,46 @@ func (s *Shell) trydhcp(args []string) {
 	}
 	dpt.RenderDPTDHCP(s.out, r, s.Color)
 	s.printf("\n")
+}
+
+// chooseIface is the interface command: a name, auto, or a list to
+// choose from.
+func (s *Shell) chooseIface(args []string) {
+	list, def := dpt.DPTIfaceList()
+	if len(args) > 0 {
+		if strings.EqualFold(args[0], "auto") {
+			s.iface = ""
+			s.printf("interface: dpt chooses (%s now)\n", def)
+			return
+		}
+		name, err := dpt.DPTIfacePick(list, def, args[0])
+		if err != nil {
+			s.printf("*** %v\n", err)
+			return
+		}
+		s.iface = name
+		s.printf("interface %s\n", name)
+		return
+	}
+	if len(list) == 0 {
+		s.printf("*** no Ethernet interface is up\n")
+		return
+	}
+	dpt.RenderIfaceList(s.out, list, def)
+	if s.lr == nil {
+		s.printf("(interface <name> or interface <number> chooses)\n")
+		return
+	}
+	answer, err := s.lr.ReadLine(dpt.DPTIfacePrompt(list, def))
+	if err != nil {
+		s.printf("\n")
+		return
+	}
+	name, err := dpt.DPTIfacePick(list, def, answer)
+	if err != nil {
+		s.printf("*** %v\n", err)
+		return
+	}
+	s.iface = name
+	s.printf("interface %s\n", name)
 }

@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -71,6 +72,29 @@ func run(args []string) int {
 		fmt.Printf("dpt %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 		return exitOK
 	}
+	if c.Select {
+		// choose the interface from a list; never from a script
+		if !elevate.Interactive() {
+			fmt.Fprintf(os.Stderr, "dpt: %s needs a terminal to choose at: use %s\n", optName(st, "select"), optName(st, "iface"))
+			return exitUsage
+		}
+		list, def := dpt.DPTIfaceList()
+		if len(list) == 0 {
+			fmt.Fprintln(os.Stderr, "MEL: no Ethernet interface is up")
+			return exitMEL
+		}
+		dpt.RenderIfaceList(os.Stdout, list, def)
+		fmt.Print(dpt.DPTIfacePrompt(list, def))
+		answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		name, err := dpt.DPTIfacePick(list, def, answer)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dpt:", err)
+			return exitUsage
+		}
+		c.Opts.Iface = name
+		// a run again under sudo takes the choice, not the question
+		args = withIface(args, st, name)
+	}
 	color := !c.NoColor && !c.JSON && term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
 	if relayed {
 		color = relayColor && !c.NoColor && !c.JSON
@@ -94,7 +118,7 @@ func run(args []string) int {
 		return exitOK
 
 	case "info":
-		r := dpt.DPTInfoGather(sysdns.Servers())
+		r := dpt.DPTInfoGather(sysdns.Servers(), c.Opts.Iface)
 		if c.JSON {
 			dpt.DPTJSON(os.Stdout, r)
 		} else {
@@ -163,6 +187,29 @@ func run(args []string) int {
 		return exitFail
 	}
 	return exitOK
+}
+
+// optName writes an option the way this system does.
+func optName(st dpt.DPTArgStyle, name string) string {
+	if st == dpt.DPTStyleWindows {
+		return "/" + name
+	}
+	return "--" + name
+}
+
+// withIface is args with the select option replaced by the chosen iface.
+func withIface(args []string, st dpt.DPTArgStyle, name string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.EqualFold(a, optName(st, "select")) {
+			continue
+		}
+		out = append(out, a)
+	}
+	if st == dpt.DPTStyleWindows {
+		return append(out, "/iface:"+name)
+	}
+	return append(out, "--iface", name)
 }
 
 func firstErr(errs ...error) error {

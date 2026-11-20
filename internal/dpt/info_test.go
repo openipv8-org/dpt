@@ -174,3 +174,41 @@ func TestLeaseFromPlist(t *testing.T) {
 		t.Fatalf("%+v", l)
 	}
 }
+
+func TestDPTIfacePick(t *testing.T) {
+	list := []DPTIfaceEntry{{Name: "en1"}, {Name: "en0"}}
+	for _, c := range []struct{ in, want string }{{"", "en1"}, {"2", "en0"}, {"EN0", "en0"}, {" 1\n", "en1"}} {
+		if got, err := DPTIfacePick(list, "en1", c.in); err != nil || got != c.want {
+			t.Errorf("%q: %q %v", c.in, got, err)
+		}
+	}
+	for _, bad := range []string{"0", "3", "eth9"} {
+		if _, err := DPTIfacePick(list, "en1", bad); err == nil {
+			t.Errorf("%q taken", bad)
+		}
+	}
+	if _, err := DPTIfacePick(list, "", ""); err == nil {
+		t.Error("no default taken")
+	}
+	var b bytes.Buffer
+	RenderIfaceList(&b, []DPTIfaceEntry{{Name: "en1", MAC: "m", Addrs: []string{"10.0.0.2/24"}, Gateway: "10.0.0.1"}, {Name: "en0", MAC: "n"}}, "en1")
+	if !strings.Contains(b.String(), "* 1  en1  m  10.0.0.2/24  gateway 10.0.0.1") || !strings.Contains(b.String(), "no IPv4 address") {
+		t.Errorf("%s", b.String())
+	}
+	for _, c := range []struct {
+		st   DPTArgStyle
+		args string
+		ok   bool
+	}{
+		{DPTStyleUnix, "dhcp --select", true},
+		{DPTStyleUnix, "info --select", true},
+		{DPTStyleWindows, "dhcp /select", true},
+		{DPTStyleUnix, "1.1.1.1 --select", false},
+		{DPTStyleUnix, "dhcp --select --iface en0", false},
+	} {
+		cmd, err := ParseDPTArgs(strings.Fields(c.args), c.st)
+		if (err == nil) != c.ok || err == nil && !cmd.Select {
+			t.Errorf("%q: %v", c.args, err)
+		}
+	}
+}

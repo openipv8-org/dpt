@@ -63,6 +63,13 @@ servers the machine uses (resolv.conf; chrony, timesyncd or ntpd; macOS
 Date & Time; Windows Time). Some Linux DHCP clients keep the lease
 readable by root only: `sudo dpt info` shows it.
 
+To test a particular interface, `--select` (`/select` on Windows) lists
+every Ethernet interface that is up, with an address or not, and lets
+you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
+`interface` does the same (`interface en0` directly, `interface auto`
+to let dpt choose); trydhcp and info then use it. From a script
+--select never asks: use `--iface`.
+
 ## Install
 
 Linux and macOS, into `/usr/local/bin/dpt` (the latest release, checked
