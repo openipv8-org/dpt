@@ -95,7 +95,8 @@ func run(args []string) int {
 		// a run again under sudo takes the choice, not the question
 		args = withIface(args, st, name)
 	}
-	color := !c.NoColor && !c.JSON && term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
+	vt := enableVT() // Windows: the console must be told to read escape sequences
+	color := vt && !c.NoColor && !c.JSON && term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
 	if relayed {
 		color = relayColor && !c.NoColor && !c.JSON
 	}
