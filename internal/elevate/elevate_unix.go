@@ -17,7 +17,7 @@ func Possible() bool { return os.Geteuid() != 0 }
 
 // Run replaces this process with sudo dpt <args>; it returns only when
 // that could not start.
-func Run(args []string, _ bool) (int, error) {
+func Run(what string, args []string, _ bool) (int, error) {
 	sudo, err := exec.LookPath("sudo")
 	if err != nil {
 		return 0, errors.New("sudo not found")
@@ -26,7 +26,7 @@ func Run(args []string, _ bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintln(os.Stderr, "dhcp needs sudo: running sudo dpt", joinArgs(args))
+	fmt.Fprintln(os.Stderr, what+" needs sudo: running sudo dpt", joinArgs(args))
 	argv := append([]string{"sudo", "--", self}, args...)
 	return 0, syscall.Exec(sudo, argv, os.Environ())
 }

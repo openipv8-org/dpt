@@ -6,6 +6,6 @@ package elevate
 
 import "errors"
 
-func Possible() bool                  { return false }
-func Run([]string, bool) (int, error) { return 0, errors.New("not on this system") }
-func Relay(string) (bool, error)      { return false, nil }
+func Possible() bool                          { return false }
+func Run(string, []string, bool) (int, error) { return 0, errors.New("not on this system") }
+func Relay(string) (bool, error)              { return false, nil }

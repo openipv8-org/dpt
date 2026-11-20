@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -24,6 +25,7 @@ import (
 	"openipv8.org/dpt/internal/dpt"
 	"openipv8.org/dpt/internal/elevate"
 	"openipv8.org/dpt/internal/mel"
+	"openipv8.org/dpt/internal/selfinstall"
 	"openipv8.org/dpt/internal/shell"
 	"openipv8.org/dpt/internal/sysdns"
 )
@@ -118,6 +120,9 @@ func run(args []string) int {
 		}
 		return exitOK
 
+	case "install", "upgrade":
+		return runInstall(ctx, c.Mode, args, color)
+
 	case "info":
 		r := dpt.DPTInfoGather(sysdns.Servers(), c.Opts.Iface)
 		if c.JSON {
@@ -132,7 +137,7 @@ func run(args []string) int {
 			// typed by a person: ask for the privilege (sudo, UAC); from
 			// a script: never ask, say what it needs
 			if mel.NeedsPrivilege(err) && !relayed && elevate.Possible() && elevate.Interactive() {
-				code, eerr := elevate.Run(args, color)
+				code, eerr := elevate.Run("dhcp", args, color)
 				if eerr == nil {
 					return code
 				}
@@ -186,6 +191,83 @@ func run(args []string) int {
 	}
 	if r.Failed() {
 		return exitFail
+	}
+	return exitOK
+}
+
+// runInstall is dpt install and dpt upgrade.
+func runInstall(ctx context.Context, mode string, args []string, color bool) int {
+	dest := selfinstall.Dest()
+	// nothing to write: say so, and ask for no privilege
+	var latest, have, self string
+	switch mode {
+	case "install":
+		var err error
+		if self, err = os.Executable(); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt:", err)
+			return exitFail
+		}
+		if selfinstall.SameFile(self, dest) {
+			fmt.Printf("dpt %s is installed: %s\n", version, dest)
+			return exitOK
+		}
+	case "upgrade":
+		var err error
+		if latest, err = selfinstall.LatestTag(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: cannot find the newest release:", err)
+			return exitFail
+		}
+		have, err = selfinstall.InstalledVersion(dest)
+		if err != nil {
+			// never overwrite what might be newer
+			fmt.Fprintf(os.Stderr, "dpt: %s %v: not replacing it (dpt install puts this dpt there)\n", dest, err)
+			return exitFail
+		}
+		if have != "" && !selfinstall.Newer(latest, have) {
+			fmt.Printf("dpt %s at %s is up to date (newest release %s)\n", have, dest, latest)
+			return exitOK
+		}
+	}
+	if !selfinstall.Writable(dest) {
+		// typed by a person: ask for the privilege; from a script: never
+		if elevate.Possible() && elevate.Interactive() {
+			code, err := elevate.Run(mode, args, color)
+			if err == nil {
+				return code
+			}
+			fmt.Fprintf(os.Stderr, "MEL: %s needs %s (%v)\n", mode, dpt.DHCPNeeds, err)
+			return exitMEL
+		}
+		fmt.Fprintf(os.Stderr, "MEL: %s needs %s (to write %s)\n", mode, dpt.DHCPNeeds, filepath.Dir(dest))
+		return exitMEL
+	}
+	switch mode {
+	case "install":
+		if err := selfinstall.Install(self, dest); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: install:", err)
+			return exitFail
+		}
+		fmt.Printf("installed dpt %s: %s\n", version, dest)
+	case "upgrade":
+		file, err := selfinstall.Download(ctx, latest, filepath.Dir(dest), os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: upgrade:", err)
+			return exitFail
+		}
+		defer os.Remove(file)
+		if err := selfinstall.Install(file, dest); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: upgrade:", err)
+			return exitFail
+		}
+		if have == "" {
+			have = "none"
+		}
+		fmt.Printf("upgraded %s: %s -> %s\n", dest, have, latest)
+	}
+	if added, err := selfinstall.AddToPath(filepath.Dir(dest)); err != nil {
+		fmt.Fprintf(os.Stderr, "dpt: could not add %s to PATH: %v\n", filepath.Dir(dest), err)
+	} else if added {
+		fmt.Printf("added %s to PATH: open a new window to use plain dpt\n", filepath.Dir(dest))
 	}
 	return exitOK
 }

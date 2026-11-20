@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT
+
+package selfinstall
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestNewer(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"v0.1.9", "v0.1.8", true},
+		{"v0.1.10", "v0.1.9", true},
+		{"v0.2.0", "v0.1.99", true},
+		{"v0.1.8", "v0.1.8", false},
+		{"v0.1.7", "v0.1.8", false},
+		{"v0.1.8", "dev", true},
+		{"v0.1.8", "v0.1.7-3-gabc-dirty", true},
+		{"dev", "v0.1.8", false},
+		{"v0.1.8", "", true},
+	} {
+		if got := Newer(c.a, c.b); got != c.want {
+			t.Errorf("Newer(%q, %q) = %v", c.a, c.b, got)
+		}
+	}
+}
+
+func TestSumFor(t *testing.T) {
+	h := "0623fa89ee5a5d98bd7a0a5bdbac238095fcd098baae7edd52fae03b0c7a7861"
+	sums := h + "  dpt-linux-amd64\n" + "abcd  dpt-short\n"
+	if got, ok := SumFor(sums, "dpt-linux-amd64"); !ok || got != h {
+		t.Errorf("%q %v", got, ok)
+	}
+	if _, ok := SumFor(sums, "dpt-darwin-amd64"); ok {
+		t.Error("absent found")
+	}
+	if _, ok := SumFor(sums, "dpt-short"); ok {
+		t.Error("short hash taken")
+	}
+}
+
+func TestPath(t *testing.T) {
+	p := `C:\Windows\system32;C:\Program Files\dpt\;C:\Tools`
+	if !PathHas(p, `c:\program files\dpt`) || PathHas(p, `C:\Program Files\other`) {
+		t.Error("PathHas")
+	}
+	if got := PathAppend(`C:\A;`, `C:\B`); got != `C:\A;C:\B` {
+		t.Error(got)
+	}
+	if got := PathAppend("", `C:\B`); got != `C:\B` {
+		t.Error(got)
+	}
+}
+
+func TestInstallAndVersion(t *testing.T) {
+	d := t.TempDir()
+	src := filepath.Join(d, "src")
+	os.WriteFile(src, []byte("#!/bin/sh\necho 'dpt v0.1.5 (linux/amd64)'\n"), 0o644)
+	dest := filepath.Join(d, "bin", "dpt")
+	if !Writable(dest) {
+		t.Fatal("temp dir not writable")
+	}
+	if err := Install(src, dest); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dest)
+	if err != nil || st.Mode().Perm() != 0o755 {
+		t.Fatalf("%v %v", st, err)
+	}
+	if v, err := InstalledVersion(dest); v != "v0.1.5" || err != nil {
+		t.Errorf("installed version %q %v", v, err)
+	}
+	// something there that does not say: never taken for "not installed"
+	other := filepath.Join(d, "other")
+	os.WriteFile(other, []byte("#!/bin/sh\nexit 3\n"), 0o755)
+	if v, err := InstalledVersion(other); v != "" || err != ErrUnknownVersion {
+		t.Errorf("unknown: %q %v", v, err)
+	}
+	if v, err := InstalledVersion(filepath.Join(d, "none")); v != "" || err != nil {
+		t.Errorf("none: %q %v", v, err)
+	}
+	// again, over the top
+	if err := Install(src, dest); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := filepath.Glob(filepath.Join(d, "bin", ".dpt-*"))
+	if len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+	if ParseVersionLine("dpt v0.1.8 (windows/amd64)\r\n") != "v0.1.8" || ParseVersionLine("nope") != "" {
+		t.Error("ParseVersionLine")
+	}
+}

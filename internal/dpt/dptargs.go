@@ -29,7 +29,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode    string // "dpt", "dhcp", "info", "shell", "help", "version"
+	Mode    string // "dpt", "dhcp", "info", "install", "upgrade", "shell", "help", "version"
 	Target  string
 	Opts    DPTDHCPOptions
 	JSON    bool
@@ -92,6 +92,8 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	}
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
 	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)\n", prog)
+	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
+	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
 	fmt.Fprintf(&b, "\ntests (letters together, any of them; none: all three):\n")
 	fmt.Fprintf(&b, "  t  time: NTP against %s, and this machine's clock checked against them\n", strings.Join(DPTDefaultNTP, ", "))
@@ -185,10 +187,10 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 			}
 		}
 		if !isOpt {
-			if c.Target != "" || c.Mode == "dhcp" || c.Mode == "info" {
-				return nil, fmt.Errorf("one of dhcp, info, an address or a name: not %q as well", Printable(a))
+			if c.Target != "" || c.Mode != "dpt" {
+				return nil, fmt.Errorf("one of dhcp, info, install, upgrade, an address or a name: not %q as well", Printable(a))
 			}
-			if strings.EqualFold(a, "dhcp") || strings.EqualFold(a, "info") {
+			if l := strings.ToLower(a); l == "dhcp" || l == "info" || l == "install" || l == "upgrade" {
 				c.Mode = strings.ToLower(a)
 				continue
 			}
@@ -238,6 +240,10 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		return nil, fmt.Errorf("%s or %s, not both", dptOptName(st, "select"), dptOptName(st, "iface"))
 	}
 	switch c.Mode {
+	case "install", "upgrade":
+		if c.Opts.Tests != (DPTTests{}) || c.Opts.Iface != "" || c.Select {
+			return nil, errors.New(c.Mode + " takes no tests and no interface")
+		}
 	case "info":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
@@ -248,7 +254,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		}
 	default:
 		if c.Target == "" {
-			return nil, errors.New("give dhcp, info, an address or a name")
+			return nil, errors.New("give dhcp, info, install, upgrade, an address or a name")
 		}
 	}
 	return c, nil

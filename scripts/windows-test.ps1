@@ -7,8 +7,9 @@
 #    github.com/openipv8-org/dpt, a test pre-release included, into
 #    %USERPROFILE%\dpt and checks it against SHA256SUMS.  Nothing is built.
 # 2. Runs the tests: help, version, bad usage, ping, DNS, time, JSON,
-#    info, the shell, and dhcp (from a script: must refuse without
-#    asking; typed: Windows asks UAC and the result comes back here).
+#    info, the shell, dhcp (from a script: must refuse without asking;
+#    typed: Windows asks UAC and the result comes back here), install
+#    (Program Files\dpt, added to PATH) and upgrade (must say up to date).
 # 3. Saves the log as %USERPROFILE%\dpt\windows-test.log and puts it on
 #    the clipboard to paste back.
 # The program is left as %USERPROFILE%\dpt\dpt.exe.
@@ -148,6 +149,30 @@ if ($admin) {
 	$colour = Read-Host 'Were OK / WARN / FAIL in colour (not escape-code junk like [32m)? (y/n)'
 	Say "colour shown properly: $colour"
 }
+
+Say ''
+Say '=== install (copies dpt to Program Files\dpt and adds that to PATH)'
+if ($admin) {
+	$ix = Invoke-Dpt @('install')
+} else {
+	Write-Host 'Windows will ask again (UAC), to install: click Yes.'
+	$ErrorActionPreference = 'Continue'
+	& $D install
+	$ix = $LASTEXITCODE
+	$ErrorActionPreference = 'Stop'
+}
+$inst = Join-Path $env:ProgramFiles 'dpt\dpt.exe'
+$rel = ((& $D /version) -split ' ')[1]
+$got = 'missing'
+if (Test-Path $inst) { $got = ((& $inst /version) -split ' ')[1] }
+if ($ix -eq 0 -and $got -eq $rel) {
+	Say "--- install exit $ix, $inst is ${got}: PASS"
+	$script:Pass++
+} else {
+	Say "--- install exit $ix, $inst is $got (want $rel): FAIL"
+	$script:Fail++
+}
+Run 'upgrade (just installed the newest: must say up to date)' 0 @('upgrade')
 
 Say ''
 Say "SUMMARY: $script:Pass passed, $script:Fail failed (shell and typed dhcp: read the log)"

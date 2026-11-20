@@ -10,8 +10,10 @@
 #    Intel) from github.com/openipv8-org/dpt and checks it against
 #    SHA256SUMS.  Nothing is built.
 # 2. Runs the tests: help, version, bad usage, ping, DNS, time, JSON,
-#    the shell, and dhcp (from a script: must refuse without asking;
-#    typed: dpt runs sudo itself, macOS asks for your Mac password).
+#    the shell, dhcp (from a script: must refuse without asking;
+#    typed: dpt runs sudo itself, macOS asks for your Mac password),
+#    dpt install (typed: sudo, then /usr/local/bin/dpt is this release)
+#    and dpt upgrade (must say up to date).
 # 3. Copies the log to the dev VM (~/ipv8dev/testlogs/dpt-mac-test.log);
 #    scp asks for the VM password.
 # The program is left in the checkout as ~/dpt/dpt (run it: ~/dpt/dpt 1.1.1.1),
@@ -104,6 +106,23 @@ DX=$?
 tr -d '\r' < "$DIR/dhcp.out" | sed "s/$(printf '\033')\[[0-9;]*m//g" >> "$LOG"
 rm -f "$DIR/dhcp.out"
 say "--- dhcp exit $DX (0 or 1 means it ran; 2 means it could not)"
+
+say ""
+say "=== install typed at a terminal: dpt runs sudo itself, copies to /usr/local/bin"
+script -q "$DIR/install.out" "$D" install
+IX=$?
+tr -d '\r' < "$DIR/install.out" >> "$LOG"
+rm -f "$DIR/install.out"
+REL=$("$D" --version | awk '{print $2}')
+GOT=$(/usr/local/bin/dpt --version 2>/dev/null | awk '{print $2}')
+if [ "$IX" = 0 ] && [ "$GOT" = "$REL" ]; then
+	say "--- install exit $IX, /usr/local/bin/dpt is $GOT: PASS"
+	PASS=$((PASS + 1))
+else
+	say "--- install exit $IX, /usr/local/bin/dpt is ${GOT:-missing} (want $REL): FAIL"
+	FAIL=$((FAIL + 1))
+fi
+run "upgrade (just installed the newest: must say up to date, no sudo)" 0 "$D" upgrade
 
 say ""
 say "SUMMARY: $PASS passed, $FAIL failed (shell and sudo dhcp: read the log)"

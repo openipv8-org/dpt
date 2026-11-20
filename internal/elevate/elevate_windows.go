@@ -51,7 +51,7 @@ var procShellExecuteExW = windows.NewLazySystemDLL("shell32.dll").NewProc("Shell
 // Run asks UAC to run dpt <args> elevated with no window of its own; what
 // it writes comes back through a named pipe and is printed here.  It
 // returns the elevated copy's exit code.
-func Run(args []string, color bool) (int, error) {
+func Run(what string, args []string, color bool) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return 0, err
@@ -81,7 +81,7 @@ func Run(args []string, color bool) (int, error) {
 	sei := shellExecuteInfo{fMask: seeMaskNoCloseProcess | seeMaskNoAsync | seeMaskFlagNoUI,
 		lpVerb: verb, lpFile: file, lpParameters: par, nShow: swHide}
 	sei.cbSize = uint32(unsafe.Sizeof(sei))
-	fmt.Fprintln(os.Stderr, "dhcp needs an Administrator prompt: asking Windows (UAC)")
+	fmt.Fprintln(os.Stderr, what+" needs an Administrator prompt: asking Windows (UAC)")
 	if r, _, e := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&sei))); r == 0 {
 		windows.CloseHandle(ph)
 		if e == windows.ERROR_CANCELLED {

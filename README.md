@@ -10,6 +10,7 @@ the segment and what it hands out.
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
 dpt info                                            this machine's lease, DNS, NTP
+dpt install | upgrade                               install, or update to the newest
 dpt                                                 interactive shell (nslookup and more)
 ```
 
@@ -79,7 +80,19 @@ against its SHA256SUMS; sudo asks for your password):
 curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash
 ```
 
-Run it again to update. Windows: `dpt-windows-amd64.exe` (or `-arm64`)
+Run it again to update.
+
+Once dpt is on a machine, it installs and updates itself:
+
+```
+dpt install     put this dpt where the system finds it: /usr/local/bin,
+                or C:\Program Files\dpt on Windows (added to PATH)
+dpt upgrade     download the newest release, check it against SHA256SUMS,
+                and replace the installed one (says so if it is up to date)
+```
+
+Both ask for sudo (Windows: UAC) when they need it, and only when
+typed; from a script they say what they need and exit 2. Windows: `dpt-windows-amd64.exe` (or `-arm64`)
 from the release page.
 
 ## Test on Windows
