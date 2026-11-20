@@ -36,7 +36,17 @@ func infoLease(i net.Interface) (*DPTLease, string) {
 			if a.DhcpEnabled == 0 {
 				return nil, "DHCP is off on this adapter (a static address)"
 			}
-			l := &DPTLease{Source: "adapter settings", Server: cstr(a.DhcpServer.IpAddress.String[:]), Address: cstr(a.IpAddressList.IpAddress.String[:])}
+			l := &DPTLease{Source: "adapter settings", Server: cstr(a.DhcpServer.IpAddress.String[:]), Address: cstr(a.IpAddressList.IpAddress.String[:]), NTPNotKept: true}
+			// what DHCP gave is kept under the adapter's GUID
+			if k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`+cstr(a.AdapterName[:]), registry.QUERY_VALUE); err == nil {
+				if v, _, err := k.GetStringValue("DhcpNameServer"); err == nil {
+					l.DNS = dhcpNameServers(v)
+				}
+				if v, _, err := k.GetStringValue("DhcpDomain"); err == nil {
+					l.Domain = Safe(v)
+				}
+				k.Close()
+			}
 			if a.LeaseObtained > 0 {
 				ob := time.Unix(a.LeaseObtained, 0)
 				l.Obtained = &ob

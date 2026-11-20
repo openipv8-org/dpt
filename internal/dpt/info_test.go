@@ -212,3 +212,17 @@ func TestDPTIfacePick(t *testing.T) {
 		}
 	}
 }
+
+func TestDHCPNameServers(t *testing.T) {
+	if got := dhcpNameServers(" 8.8.8.8 192.168.178.254 "); strings.Join(got, ",") != "8.8.8.8,192.168.178.254" {
+		t.Errorf("%v", got)
+	}
+	if got := dhcpNameServers(""); len(got) != 0 {
+		t.Errorf("%v", got)
+	}
+	var b bytes.Buffer
+	RenderDPTInfo(&b, &DPTInfo{Ifaces: []DPTInfoIface{{Name: "Wi-Fi", Lease: &DPTLease{Server: "x", DNS: []string{"8.8.8.8"}, NTPNotKept: true, Source: "adapter settings"}}}}, false)
+	if !strings.Contains(b.String(), "DNS (from DHCP)    8.8.8.8") || !strings.Contains(b.String(), "NTP (from DHCP)    not kept by this system") {
+		t.Errorf("%s", b.String())
+	}
+}

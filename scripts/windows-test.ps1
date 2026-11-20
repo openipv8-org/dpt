@@ -3,9 +3,9 @@
 # In PowerShell (a normal one, not "Run as administrator"):
 #   irm https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/windows-test.ps1 | iex
 #
-# 1. Downloads the latest release of dpt for this PC (x64 or ARM64) from
-#    github.com/openipv8-org/dpt into %USERPROFILE%\dpt and checks it
-#    against SHA256SUMS.  Nothing is built.
+# 1. Downloads the newest release of dpt for this PC (x64 or ARM64) from
+#    github.com/openipv8-org/dpt, a test pre-release included, into
+#    %USERPROFILE%\dpt and checks it against SHA256SUMS.  Nothing is built.
 # 2. Runs the tests: help, version, bad usage, ping, DNS, time, JSON,
 #    info, the shell, and dhcp (from a script: must refuse without
 #    asking; typed: Windows asks UAC and the result comes back here).
@@ -35,14 +35,21 @@ switch ($arch) {
 	'ARM64' { $Bin = 'dpt-windows-arm64.exe' }
 	default { Say "no dpt build for $arch"; return }
 }
-$Url = 'https://github.com/openipv8-org/dpt/releases/latest/download'
+# the newest release, a test pre-release included (releases/latest skips those)
+try {
+	$Tag = (Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/openipv8-org/dpt/releases?per_page=1')[0].tag_name
+} catch {
+	Write-Host "cannot reach GitHub: $_"
+	return
+}
+$Url = "https://github.com/openipv8-org/dpt/releases/download/$Tag"
 $os = Get-CimInstance Win32_OperatingSystem
 Say "dpt Windows test  $(Get-Date)"
 Say "$($os.Caption) $($os.Version) $arch"
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 Say "running as Administrator: $admin"
 
-Say "downloading $Bin from the latest release"
+Say "downloading $Bin from release $Tag"
 try {
 	Invoke-WebRequest -UseBasicParsing -Uri "$Url/$Bin" -OutFile (Join-Path $Dir $Bin)
 	Invoke-WebRequest -UseBasicParsing -Uri "$Url/SHA256SUMS" -OutFile (Join-Path $Dir 'SHA256SUMS')

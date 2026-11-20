@@ -54,6 +54,9 @@ type DPTLease struct {
 	NTP      []string   `json:"ntp,omitempty"`
 	Domain   string     `json:"domain,omitempty"`
 	Source   string     `json:"source"`
+	// NTPNotKept: the system keeps no record of the NTP servers in the
+	// lease (Windows), so none is not known to be none
+	NTPNotKept bool `json:"ntp_not_kept,omitempty"`
 }
 
 // Lease notes.
@@ -157,6 +160,10 @@ func leaseFromKV(s string, obtained time.Time, source string) *DPTLease {
 	l.NTP = safeFields(kv["NTP"])
 	return l
 }
+
+// dhcpNameServers reads Windows's DhcpNameServer value: addresses
+// separated by spaces (or commas).
+func dhcpNameServers(v string) []string { return safeFields(strings.TrimSpace(v)) }
 
 // leaseKV reads KEY=value lines (lease files, systemd .conf files).
 func leaseKV(s string) map[string]string {
@@ -450,7 +457,11 @@ func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
 				kv("lease", strings.TrimSpace(lease))
 			}
 			kv("DNS (from DHCP)", none(l.DNS))
-			kv("NTP (from DHCP)", none(l.NTP))
+			if l.NTPNotKept {
+				kv("NTP (from DHCP)", "not kept by this system")
+			} else {
+				kv("NTP (from DHCP)", none(l.NTP))
+			}
 			if l.Domain != "" {
 				kv("domain", l.Domain)
 			}
