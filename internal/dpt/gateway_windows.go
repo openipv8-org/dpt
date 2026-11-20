@@ -5,14 +5,15 @@
 package dpt
 
 import (
+	"net"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// gatewayIfaces: the adapters (by IPv4 interface index) that have an IPv4
-// gateway.
-func gatewayIfaces() map[int]bool {
+// gateways: the IPv4 gateway of each adapter (by IPv4 interface index)
+// that has one.
+func gateways() map[int]net.IP {
 	size := uint32(15000)
 	for range 3 {
 		buf := make([]byte, size)
@@ -24,10 +25,16 @@ func gatewayIfaces() map[int]bool {
 		if err != nil {
 			return nil
 		}
-		out := map[int]bool{}
+		out := map[int]net.IP{}
 		for ; a != nil; a = a.Next {
-			if a.OperStatus == windows.IfOperStatusUp && a.FirstGatewayAddress != nil {
-				out[int(a.IfIndex)] = true
+			if a.OperStatus != windows.IfOperStatusUp {
+				continue
+			}
+			for g := a.FirstGatewayAddress; g != nil; g = g.Next {
+				if ip := g.Address.IP(); ip != nil && ip.To4() != nil {
+					out[int(a.IfIndex)] = ip.To4()
+					break
+				}
 			}
 		}
 		return out

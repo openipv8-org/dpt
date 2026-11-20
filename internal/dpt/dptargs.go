@@ -29,7 +29,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode    string // "dpt", "dhcp", "shell", "help", "version"
+	Mode    string // "dpt", "dhcp", "info", "shell", "help", "version"
 	Target  string
 	Opts    DPTDHCPOptions
 	JSON    bool
@@ -49,7 +49,7 @@ var dptOpts = []dptOpt{
 	{"names", "", true, "names to resolve, a,b,c (google.com,microsoft.com,cloudflare.com,ietf.org,github.com)"},
 	{"ntp", "", true, "reference NTP servers, a,b (time.google.com,time.windows.com)"},
 	{"all", "", false, "test every address a name resolves to"},
-	{"iface", "", true, "dhcp: the interface to probe (the first active one)"},
+	{"iface", "", true, "dhcp: the interface to probe (the Ethernet one with the LAN gateway)"},
 	{"listen", "", true, "dhcp: how long to collect offers (5)"},
 	{"random-mac", "", false, "dhcp: probe with a random MAC instead of the interface's (some routers' offers then never arrive)"},
 	{"4", "", false, "IPv4 only"},
@@ -89,6 +89,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 		tests = "/tdp"
 	}
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
+	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
 	fmt.Fprintf(&b, "\ntests (letters together, any of them; none: all three):\n")
 	fmt.Fprintf(&b, "  t  time: NTP against %s, and this machine's clock checked against them\n", strings.Join(DPTDefaultNTP, ", "))
@@ -182,11 +183,11 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 			}
 		}
 		if !isOpt {
-			if c.Target != "" || c.Mode == "dhcp" {
-				return nil, fmt.Errorf("one of dhcp, an address or a name: not %q as well", Printable(a))
+			if c.Target != "" || c.Mode == "dhcp" || c.Mode == "info" {
+				return nil, fmt.Errorf("one of dhcp, info, an address or a name: not %q as well", Printable(a))
 			}
-			if strings.EqualFold(a, "dhcp") {
-				c.Mode = "dhcp"
+			if strings.EqualFold(a, "dhcp") || strings.EqualFold(a, "info") {
+				c.Mode = strings.ToLower(a)
 				continue
 			}
 			c.Target = a
@@ -227,13 +228,17 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 	switch c.Mode {
 	case "help", "version":
 		return c, nil
+	case "info":
+		if c.Opts.Tests != (DPTTests{}) {
+			return nil, errors.New("info only reads this machine: it takes no tests")
+		}
 	case "dhcp":
 		if c.Opts.Tests.Ping {
 			return nil, errors.New("dhcp takes t and d (the NTP and DNS servers offered): p does not apply")
 		}
 	default:
 		if c.Target == "" {
-			return nil, errors.New("give dhcp, an address or a name")
+			return nil, errors.New("give dhcp, info, an address or a name")
 		}
 	}
 	return c, nil

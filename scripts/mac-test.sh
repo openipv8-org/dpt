@@ -85,6 +85,7 @@ run "time only, time.apple.com as the target" 0 "$D" time.apple.com -t
 run "a name with every IPv4 address" 0 "$D" one.one.one.one -4 --all -c 2
 run "a dead address (must FAIL)" 1 "$D" 192.0.2.1 -p -c 2 -w 1
 run "JSON" 0 "$D" 1.1.1.1 -tdp -c 2 --json
+run "info (reads this Mac, sends nothing)" 0 "$D" info
 run "dhcp from a script (must not ask; says it needs sudo)" 2 "$D" dhcp
 
 say ""

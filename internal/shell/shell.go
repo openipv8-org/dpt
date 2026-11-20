@@ -22,7 +22,8 @@ const rootServer = "198.41.0.4"
 
 // Shell is the interactive mode's state: nslookup's settings and dpt's.
 type Shell struct {
-	out io.Writer
+	sysDNS []string // the system's resolvers, for info
+	out    io.Writer
 
 	initial  string // the server dpt started with
 	server   string // the default server: an address
@@ -56,6 +57,7 @@ func New(out io.Writer, servers []string, o dpt.DPTDHCPOptions) *Shell {
 	if len(servers) > 0 {
 		s.initial, s.server = servers[0], servers[0]
 	}
+	s.sysDNS = servers
 	return s
 }
 
@@ -151,6 +153,8 @@ func (s *Shell) Do(line string) bool {
 		s.time(args)
 	case cmd == "trydhcp":
 		s.trydhcp(args)
+	case cmd == "info":
+		dpt.RenderDPTInfo(s.out, dpt.DPTInfoGather(s.sysDNS), s.Color)
 	case cmd == "dpt":
 		s.dpt(args)
 	case cmd == "features":
@@ -196,6 +200,7 @@ dpt:
   time [host]             NTP time of host (default ntpd, else the server) against the references
   ntpd=<server>           the server time asks (set ntpd= clears it)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
+  info                    this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
   help, ?                 this list

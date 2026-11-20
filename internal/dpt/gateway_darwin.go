@@ -5,14 +5,16 @@
 package dpt
 
 import (
+	"net"
 	"syscall"
 
 	"golang.org/x/net/route"
 )
 
-// gatewayIfaces: the interfaces (by index) with an IPv4 default route,
-// scoped ones too (a VPN takes the main default; the LAN's stays scoped).
-func gatewayIfaces() map[int]bool {
+// gateways: the IPv4 default gateway of each interface (by index) that
+// has one, scoped routes too (a VPN takes the main default; the LAN's
+// stays scoped).
+func gateways() map[int]net.IP {
 	rib, err := route.FetchRIB(syscall.AF_INET, route.RIBTypeRoute, 0)
 	if err != nil {
 		return nil
@@ -21,7 +23,7 @@ func gatewayIfaces() map[int]bool {
 	if err != nil {
 		return nil
 	}
-	out := map[int]bool{}
+	out := map[int]net.IP{}
 	for _, m := range msgs {
 		rm, ok := m.(*route.RouteMessage)
 		if !ok || rm.Flags&syscall.RTF_GATEWAY == 0 || len(rm.Addrs) <= syscall.RTAX_NETMASK {
@@ -34,10 +36,13 @@ func gatewayIfaces() map[int]bool {
 		if mask, ok := rm.Addrs[syscall.RTAX_NETMASK].(*route.Inet4Addr); ok && mask.IP != [4]byte{} {
 			continue
 		}
-		if _, ok := rm.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr); !ok {
+		gw, ok := rm.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr)
+		if !ok {
 			continue // a gateway that is not an IPv4 address: a tunnel's
 		}
-		out[rm.Index] = true
+		if _, seen := out[rm.Index]; !seen {
+			out[rm.Index] = net.IP(gw.IP[:]).To4()
+		}
 	}
 	return out
 }

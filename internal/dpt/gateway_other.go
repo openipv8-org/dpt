@@ -4,4 +4,6 @@
 
 package dpt
 
-func gatewayIfaces() map[int]bool { return nil }
+import "net"
+
+func gateways() map[int]net.IP { return nil }

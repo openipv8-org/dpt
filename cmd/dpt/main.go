@@ -93,6 +93,15 @@ func run(args []string) int {
 		}
 		return exitOK
 
+	case "info":
+		r := dpt.DPTInfoGather(sysdns.Servers())
+		if c.JSON {
+			dpt.DPTJSON(os.Stdout, r)
+		} else {
+			dpt.RenderDPTInfo(os.Stdout, r, color)
+		}
+		return exitOK
+
 	case "dhcp":
 		if err := firstErr(mel.Interface(false), mel.DHCP(c.Opts.Iface), mel.UDP()); err != nil {
 			// typed by a person: ask for the privilege (sudo, UAC); from

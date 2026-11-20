@@ -755,6 +755,15 @@ func dptHasIPv4(i net.Interface) bool {
 	return false
 }
 
+// gatewayIfaces: the interfaces (by index) with an IPv4 default gateway.
+func gatewayIfaces() map[int]bool {
+	out := map[int]bool{}
+	for i := range gateways() {
+		out[i] = true
+	}
+	return out
+}
+
 func dptProbeable(i net.Interface) bool {
 	if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || len(i.HardwareAddr) != 6 {
 		return false

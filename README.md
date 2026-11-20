@@ -9,6 +9,7 @@ the segment and what it hands out.
 ```
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
+dpt info                                            this machine's lease, DNS, NTP
 dpt                                                 interactive shell (nslookup and more)
 ```
 
@@ -54,6 +55,25 @@ TIME      time.google.com            +0.2 ms  s1  delay   27.8 ms  .GOOG.
           this clock is 2.1 ms behind the reference servers             OK
 FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ```
+
+`dpt info` sends nothing: it reads what the machine already has. For
+each interface: address, gateway, and the DHCP lease it holds (server,
+obtained, expires, the DNS and NTP servers in it); then the DNS and NTP
+servers the machine uses (resolv.conf; chrony, timesyncd or ntpd; macOS
+Date & Time; Windows Time). Some Linux DHCP clients keep the lease
+readable by root only: `sudo dpt info` shows it.
+
+## Install
+
+Linux and macOS, into `/usr/local/bin/dpt` (the latest release, checked
+against its SHA256SUMS; sudo asks for your password):
+
+```
+curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash
+```
+
+Run it again to update. Windows: `dpt-windows-amd64.exe` (or `-arm64`)
+from the release page.
 
 ## Test on a Mac
 
