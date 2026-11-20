@@ -44,9 +44,20 @@ type Shell struct {
 	search   bool
 	defname  bool
 	ntpd     string
+	smtpHost string // the last smtp host: smtp test uses it
 
 	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
 	Color bool
+	// NewLive, when set, starts the status line shown while a command
+	// works (a terminal); nil: none.
+	NewLive func() *dpt.Live
+}
+
+func (s *Shell) live() *dpt.Live {
+	if s.NewLive == nil {
+		return nil
+	}
+	return s.NewLive()
 }
 
 // New is a shell whose default server is the system's first.
@@ -68,6 +79,8 @@ func (s *Shell) printf(f string, a ...any) { fmt.Fprintf(s.out, f, a...) }
 // Run reads commands from in until exit or end of input.
 func (s *Shell) Run(in *os.File) error {
 	lr := newLineReader(in, s.out, HistoryFile())
+	lr.redact = withoutPassword
+	lr.complete = s.complete
 	s.lr = lr
 	if s.server == "" {
 		s.printf("*** no DNS server found: use server <address>\n")
@@ -167,6 +180,14 @@ func (s *Shell) Do(line string) bool {
 		s.dpt(args)
 	case cmd == "features":
 		s.features(args)
+	case cmd == "smtp":
+		s.smtp(args)
+	case cmd == "sweep":
+		s.sweep(args)
+	case cmd == "ports":
+		s.ports(args)
+	case cmd == "outside-ip":
+		s.outsideIP()
 	default:
 		// a lookup: <name> or <name> <server>
 		if len(f) > 2 {
@@ -212,6 +233,16 @@ dpt:
   interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
+  smtp [host]             SMTP on 25, 465, 587: greeting, STARTTLS or TLS, certificate, AUTH
+  smtp [host] test <user> [password]
+                          and log in: over trusted TLS when there is one, else untrusted TLS,
+                          else in the clear (WARN). No host: the last smtp host; no password:
+                          asked for, and never kept in the history
+  sweep [ports] [network] ping the /24 around the server (or network, or this machine's),
+                          25 at a time; ports: then the 50 common TCP ports of each live one
+  ports [host]            the 50 common TCP ports of host (default the current server)
+  outside-ip              the address the internet sees (asks ifconfig.me)
+  Tab completes commands, options and names
   help, ?                 this list
 `)
 }
@@ -692,7 +723,10 @@ func (s *Shell) time(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	t := dpt.DPTTimeRun(ctx, []dpt.DPTTimeAsk{{Server: host, Role: "target"}}, s.opts())
+	o := s.opts()
+	o.Live = s.live()
+	t := dpt.DPTTimeRun(ctx, []dpt.DPTTimeAsk{{Server: host, Role: "target"}}, o)
+	o.Live.Stop()
 	dpt.RenderDPTTime(s.out, t, s.Color)
 	s.printf("\n")
 }
@@ -704,12 +738,18 @@ func (s *Shell) dpt(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	r, err := dpt.RunDPT(ctx, name, s.opts())
+	o := s.opts()
+	p := dpt.NewDPTPrinter(s.out, s.Color, false)
+	o.Live = s.live()
+	o.OnTarget = func(t dpt.DPTTarget) { o.Live.Out(func() { p.Target(t) }) }
+	o.OnSection = func(a *dpt.DPTAddrReport, sec string) { o.Live.Out(func() { p.Section(a, sec) }) }
+	r, err := dpt.RunDPT(ctx, name, o)
+	o.Live.Stop()
 	if err != nil {
 		s.printf("*** %v\n", err)
 		return
 	}
-	dpt.RenderDPT(s.out, r, s.Color, false)
+	p.Summary(r)
 	s.printf("\n")
 }
 
@@ -722,7 +762,9 @@ func (s *Shell) features(args []string) {
 	defer cancel()
 	o := s.opts()
 	o.Count = 1
+	o.Live = s.live()
 	r, err := dpt.RunDPT(ctx, name, o)
+	o.Live.Stop()
 	if err != nil {
 		s.printf("*** %v\n", err)
 		return
@@ -768,12 +810,16 @@ func (s *Shell) trydhcp(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
+	p := dpt.NewDPTDHCPPrinter(s.out, s.Color)
+	o.Live = s.live()
+	o.OnDHCPSection = func(r *dpt.DPTDHCPReport, sec string) { o.Live.Out(func() { p.Section(r, sec) }) }
 	r, err := dpt.RunDPTDHCP(ctx, o)
+	o.Live.Stop()
 	if err != nil {
 		s.printf("MEL: %v\n", err)
 		return
 	}
-	dpt.RenderDPTDHCP(s.out, r, s.Color)
+	p.Summary(r)
 	s.printf("\n")
 }
 

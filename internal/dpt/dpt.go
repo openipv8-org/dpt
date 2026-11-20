@@ -4,14 +4,11 @@ package dpt
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,6 +69,13 @@ type DPTOptions struct {
 	Interval time.Duration
 	// Resolver for the target name and refids; nil: the system's.
 	Resolver *net.Resolver
+	// Live shows what is running while it runs; nil: nothing.
+	Live *Live
+	// OnTarget and OnSection, when set, get the target once it is
+	// resolved and each section of each address as soon as it is done,
+	// in the order of DPTSections.
+	OnTarget  func(t DPTTarget)
+	OnSection func(a *DPTAddrReport, section string)
 }
 
 func (o *DPTOptions) defaults() {
@@ -272,38 +276,60 @@ func RunDPT(ctx context.Context, target string, o DPTOptions) (*DPTReport, error
 	}
 	for _, ip := range ips {
 		rep.Target.Tested = append(rep.Target.Tested, ip.String())
-		rep.Results = append(rep.Results, runDPTAddr(ctx, ip, o))
+	}
+	if o.OnTarget != nil {
+		o.OnTarget(rep.Target)
+	}
+	rep.Results = make([]DPTAddrReport, len(ips))
+	for i, ip := range ips {
+		runDPTAddr(ctx, ip, o, &rep.Results[i])
 	}
 	return rep, nil
 }
 
-func runDPTAddr(ctx context.Context, ip net.IP, o DPTOptions) DPTAddrReport {
-	a := DPTAddrReport{Address: ip.String()}
+func runDPTAddr(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport) {
+	*a = DPTAddrReport{Address: ip.String()}
+	emit := func(sec string) {
+		if o.OnSection != nil {
+			o.OnSection(a, sec)
+		}
+	}
+	emit("ADDRESS")
 	t := o.Tests.Effective()
-	var wg sync.WaitGroup
-	// the ping takes count seconds: the rest runs meanwhile
+	// all three run at once (the ping takes count seconds); the sections
+	// are written in their order as each is done
+	ping, dns, tm := make(chan DPTPing, 1), make(chan DPTDNS, 1), make(chan DPTTime, 1)
 	if t.Ping {
-		wg.Add(1)
-		go func() { defer wg.Done(); p := DPTPingRun(ctx, ip, o); a.Ping = &p }()
+		go func() { ping <- DPTPingRun(ctx, ip, o) }()
 	}
 	if t.DNS {
-		wg.Add(1)
-		go func() { defer wg.Done(); d := DPTDNSRun(ctx, ip.String(), o); a.DNS = &d }()
+		go func() { dns <- DPTDNSRun(ctx, ip.String(), o) }()
 	}
 	if t.Time {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tm := DPTTimeRun(ctx, []DPTTimeAsk{{Server: ip.String(), Role: "target"}}, o)
-			a.Time = &tm
-		}()
+		go func() { tm <- DPTTimeRun(ctx, []DPTTimeAsk{{Server: ip.String(), Role: "target"}}, o) }()
 	}
-	wg.Wait()
+	if t.Ping {
+		p := <-ping
+		a.Ping = &p
+		emit("PING")
+	}
+	if t.DNS {
+		d := <-dns
+		a.DNS = &d
+		emit("DNS")
+	}
+	if t.Time {
+		x := <-tm
+		a.Time = &x
+		emit("TIME")
+	}
 	if t.Ping && t.DNS && t.Time {
-		f := dptFeatures(ctx, ip, o, &a)
+		o.Live.Set("features", "features of "+ip.String())
+		f := dptFeatures(ctx, ip, o, a)
+		o.Live.Drop("features")
 		a.Features = &f
+		emit("FEATURES")
 	}
-	return a
 }
 
 // DPTPingRun sends o.Count echoes to ip, one per o.Interval.
@@ -316,11 +342,13 @@ func DPTPingRun(ctx context.Context, ip net.IP, o DPTOptions) DPTPing {
 		return p
 	}
 	defer c.Close()
+	defer o.Live.Drop("ping")
 	var replies []EchoReply
 	for i := 1; i <= o.Count; i++ {
 		if ctx.Err() != nil {
 			break
 		}
+		o.Live.Set("ping", fmt.Sprintf("ping %d/%d", i, o.Count))
 		start := time.Now()
 		r, err := c.Echo(i, o.Timeout)
 		p.Sent++
@@ -360,7 +388,9 @@ func DPTDNSRun(ctx context.Context, server string, o DPTOptions) DPTDNS {
 	addr := DNSServerAddr(server, 53)
 	var total time.Duration
 	noAnswer := 0
+	defer o.Live.Drop("dns")
 	for i := 0; i < o.Count && ctx.Err() == nil; i++ {
+		o.Live.Set("dns", fmt.Sprintf("dns %d/%d", i+1, o.Count))
 		name := o.Names[i%len(o.Names)]
 		row := DPTDNSRow{Name: name}
 		a, err := DNSAsk(ctx, addr, name, DNSAskOptions{Type: DNSTypeA}, o.Timeout)
@@ -445,10 +475,20 @@ func DPTTimeRun(ctx context.Context, extra []DPTTimeAsk, o DPTOptions) DPTTime {
 	rows := make([]DPTTimeRow, len(asks))
 	results := make([]*NTPResult, len(asks))
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	answered := 0
+	o.Live.Set("time", fmt.Sprintf("time 0/%d", len(asks)))
+	defer o.Live.Drop("time")
 	for i, a := range asks {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				mu.Lock()
+				answered++
+				o.Live.Set("time", fmt.Sprintf("time %d/%d", answered, len(asks)))
+				mu.Unlock()
+			}()
 			row := DPTTimeRow{Server: a.Server, Role: a.Role}
 			r, err := NTPQuery(ctx, a.Server, o.Timeout)
 			if err != nil {
@@ -694,6 +734,9 @@ type DPTDHCPOptions struct {
 	Iface     string
 	RandomMAC bool
 	Listen    time.Duration
+	// OnDHCPSection, when set, gets each section as soon as it is done,
+	// in the order of DPTDHCPSections.
+	OnDHCPSection func(r *DPTDHCPReport, section string)
 }
 
 // DPTDefaultIface is the interface a DHCP probe goes out of when none is
@@ -791,7 +834,35 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 		mac = ifi.HardwareAddr
 	}
 	rep := &DPTDHCPReport{Iface: o.Iface, MAC: mac.String(), Listen: ms(o.Listen), Started: time.Now(), VPN: DPTVPNTunnels()}
+	emit := func(sec string) {
+		if o.OnDHCPSection != nil {
+			o.OnDHCPSection(rep, sec)
+		}
+	}
+	listening, stopped := make(chan struct{}), make(chan struct{})
+	if o.Live == nil {
+		close(stopped)
+	} else {
+		go func() {
+			defer close(stopped)
+			start := time.Now()
+			t := time.NewTicker(250 * time.Millisecond)
+			defer t.Stop()
+			for {
+				left := (o.Listen - time.Since(start) + time.Second - 1) / time.Second
+				o.Live.Set("dhcp", fmt.Sprintf("dhcp: listening for offers on %s, %d s to go", o.Iface, max(left, 1)))
+				select {
+				case <-listening:
+					o.Live.Drop("dhcp")
+					return
+				case <-t.C:
+				}
+			}
+		}()
+	}
 	offers, err := DHCPProbe(ctx, DHCPProbeOptions{Iface: o.Iface, MAC: mac, Listen: o.Listen})
+	close(listening)
+	<-stopped
 	if err != nil {
 		return nil, err
 	}
@@ -827,16 +898,28 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 	default:
 		rep.Status = DPTOK
 	}
+	emit("DHCP")
 	tests := o.Tests.Effective()
 	if !tests.DNS {
 		dns = nil
 	}
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	asked := 0
+	if len(dns) > 0 {
+		o.Live.Set("dns", fmt.Sprintf("dns 0/%d servers", len(dns)))
+	}
 	rep.DNS = make([]DPTDHCPCheck, len(dns))
 	for i, d := range dns {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				mu.Lock()
+				asked++
+				o.Live.Set("dns", fmt.Sprintf("dns %d/%d servers", asked, len(dns)))
+				mu.Unlock()
+			}()
 			c := DPTDHCPCheck{Server: d}
 			a, err := DNSAsk(ctx, DNSServerAddr(d, 53), o.Names[0], DNSAskOptions{}, o.Timeout)
 			if err != nil {
@@ -851,15 +934,12 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 	for _, n := range ntp {
 		extra = append(extra, DPTTimeAsk{Server: n, Role: "dhcp"})
 	}
+	tmc := make(chan DPTTime, 1)
 	if tests.Time {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tm := DPTTimeRun(ctx, extra, o.DPTOptions)
-			rep.Time = &tm
-		}()
+		go func() { tmc <- DPTTimeRun(ctx, extra, o.DPTOptions) }()
 	}
 	wg.Wait()
+	o.Live.Drop("dns")
 	if tests.DNS {
 		rep.DNSState = DPTOK
 		if len(dns) == 0 {
@@ -873,6 +953,11 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 	} else {
 		rep.DNS = nil
 	}
+	emit("DNS")
+	if tests.Time {
+		tm := <-tmc
+		rep.Time = &tm
+	}
 	if rep.Time != nil {
 		for _, r := range rep.Time.Rows {
 			if r.Role == "dhcp" && !r.OK {
@@ -880,6 +965,7 @@ func RunDPTDHCP(ctx context.Context, o DPTDHCPOptions) (*DPTDHCPReport, error) {
 			}
 		}
 	}
+	emit("TIME")
 	return rep, nil
 }
 
@@ -960,318 +1046,4 @@ func dptDHCPServer(of DHCPOfferSeen) DPTDHCPServer {
 		}
 	}
 	return s
-}
-
-// ------------------------------------------------------------ rendering
-
-// DPTJSON writes v (a *DPTReport or *DPTDHCPReport) as one JSON document.
-func DPTJSON(w io.Writer, v any) error {
-	e := json.NewEncoder(w)
-	e.SetIndent("", "  ")
-	return e.Encode(v)
-}
-
-// dptOut writes the sectioned text: a 10-column section name, the body,
-// and the status at the right.
-type dptOut struct {
-	w     io.Writer
-	color bool
-}
-
-const dptWidth = 72
-
-func (o dptOut) status(s string) string {
-	if !o.color {
-		return s
-	}
-	switch s {
-	case DPTOK:
-		return "\x1b[32m" + s + "\x1b[0m"
-	case DPTWarn:
-		return "\x1b[33m" + s + "\x1b[0m"
-	case DPTFail:
-		return "\x1b[31m" + s + "\x1b[0m"
-	}
-	return s
-}
-
-func (o dptOut) red(s string) string {
-	if !o.color {
-		return s
-	}
-	return "\x1b[1;31m" + s + "\x1b[0m"
-}
-
-func (o dptOut) line(section, body, status string) {
-	l := fmt.Sprintf("%-10s%s", section, body)
-	if status != "" {
-		if pad := dptWidth - len(l); pad > 0 {
-			l += strings.Repeat(" ", pad)
-		} else {
-			l += "  "
-		}
-		l += o.status(status)
-	}
-	fmt.Fprintln(o.w, strings.TrimRight(l, " "))
-}
-
-func fms(v Ms) string { return strconv.FormatFloat(float64(v), 'f', 1, 64) }
-
-func fsigned(v Ms) string {
-	s := fms(v)
-	if v >= 0 {
-		s = "+" + s
-	}
-	return s + " ms"
-}
-
-// RenderDPT writes a report as sectioned text; verbose adds a line per
-// echo and per lookup.
-func RenderDPT(w io.Writer, r *DPTReport, color, verbose bool) {
-	o := dptOut{w: w, color: color}
-	t := r.Target.Input
-	if len(r.Target.Addresses) > 1 || r.Target.Addresses[0] != t {
-		t += "  (" + strings.Join(r.Target.Addresses, " ") + ")"
-	}
-	o.line("TARGET", t, "")
-	for _, a := range r.Results {
-		if len(r.Results) > 1 {
-			o.line("ADDRESS", a.Address, "")
-		}
-		if p := a.Ping; p == nil {
-		} else if p.Error != "" {
-			o.line("PING", p.Error, p.Status)
-		} else {
-			if verbose {
-				for _, row := range p.Rows {
-					if row.OK {
-						ttl := ""
-						if row.TTL >= 0 {
-							ttl = "  ttl " + strconv.Itoa(row.TTL)
-						}
-						o.line("", fmt.Sprintf("seq %d  %s ms%s", row.Seq, fms(row.RTT), ttl), "")
-					} else {
-						o.line("", fmt.Sprintf("seq %d  %s", row.Seq, row.Error), "")
-					}
-				}
-			}
-			body := fmt.Sprintf("%d/%d  loss %.0f%%", p.Received, p.Sent, p.Loss)
-			if p.Received > 0 {
-				body += fmt.Sprintf("  rtt min/avg/max/sd %s/%s/%s/%s ms", fms(p.Min), fms(p.Avg), fms(p.Max), fms(p.StdDev))
-			}
-			o.line("PING", body, p.Status)
-		}
-		if d := a.DNS; d == nil {
-		} else if d.NoService {
-			o.line("DNS", "no DNS service", "")
-		} else {
-			if verbose {
-				for _, row := range d.Rows {
-					if row.Error != "" {
-						o.line("", fmt.Sprintf("%-16s %s", row.Name, row.Error), "")
-						continue
-					}
-					o.line("", fmt.Sprintf("%-16s %-8s %6s ms  %-8s %s", row.Name, row.Rcode, fms(row.Time), strings.Join(row.Flags, " "), strings.Join(row.Answers, ", ")), "")
-				}
-			}
-			flags := ""
-			if d.Recursion {
-				flags += " RA"
-			}
-			if d.DNSSEC {
-				flags += " AD"
-			}
-			if d.EDNS0 {
-				flags += fmt.Sprintf(" EDNS0(%d)", d.EDNSSize)
-			}
-			o.line("DNS", fmt.Sprintf("%d/%d answered by %s  avg %s ms %s", d.Answered, len(d.Rows), d.Server, fms(d.Avg), flags), d.Status)
-		}
-		if a.Time != nil {
-			renderDPTTime(o, *a.Time)
-		}
-		if a.Features != nil {
-			o.line("FEATURES", dptFeatureWords(*a.Features), "")
-		}
-	}
-}
-
-func renderDPTTime(o dptOut, t DPTTime) {
-	first := true
-	sec := func() string {
-		if first {
-			first = false
-			return "TIME"
-		}
-		return ""
-	}
-	for _, r := range t.Rows {
-		name := r.Server
-		if r.Role == "dhcp" {
-			name += " (dhcp)"
-		}
-		if !r.OK {
-			msg := r.Error
-			if r.NoService {
-				msg = "no NTP service"
-			}
-			o.line(sec(), fmt.Sprintf("%-22s %s", name, msg), "")
-			continue
-		}
-		ref := r.RefID
-		if r.RefName != "" {
-			ref += " " + r.RefName
-		}
-		extra := ""
-		if r.Leap == 3 {
-			extra = "  UNSYNCHRONISED"
-		} else if r.Leap != 0 {
-			extra = fmt.Sprintf("  leap %d", r.Leap)
-		}
-		o.line(sec(), fmt.Sprintf("%-22s %11s  s%-2d delay %6s ms  %s%s", name, fsigned(r.Offset), r.Stratum,
-			fms(r.Delay), ref, extra), "")
-	}
-	body := "max divergence " + fms(t.MaxDivergence) + " ms"
-	if t.Reference == "" {
-		body = "no reference answered"
-	}
-	st := t.DivStatus
-	if st == "" {
-		st = t.Status
-	}
-	if t.Reason != "" && (t.LocalStatus == "" || !strings.HasPrefix(t.Reason, "this clock")) {
-		body += "  (" + t.Reason + ")"
-	}
-	o.line(sec(), body, st)
-	if t.LocalStatus != "" {
-		of := " "
-		if t.LocalOffset >= 0 {
-			of = " of "
-		}
-		o.line(sec(), "this clock is "+dptLocalWords(t.LocalOffset)+of+"the reference servers", t.LocalStatus)
-	}
-}
-
-func dptFeatureWords(f DPTFeatures) string {
-	var w []string
-	add := func(on bool, s string) {
-		if on {
-			w = append(w, s)
-		}
-	}
-	add(f.ICMP, "icmp")
-	add(f.DNSUDP, "dns/udp")
-	add(f.DNSTCP, "dns/tcp")
-	add(f.Recursion, "recursion")
-	add(f.EDNS0, "edns0")
-	add(f.DNSSEC, "dnssec")
-	add(f.DoT, "dot(853)")
-	if f.NTP {
-		w = append(w, fmt.Sprintf("ntp(s%d)", f.Stratum))
-	}
-	if len(w) == 0 {
-		return "none"
-	}
-	return strings.Join(w, " ")
-}
-
-// RenderDPTDHCP writes a DHCP-mode report as sectioned text.
-func RenderDPTDHCP(w io.Writer, r *DPTDHCPReport, color bool) {
-	o := dptOut{w: w, color: color}
-	o.line("DHCP", fmt.Sprintf("%s  client %s  listened %s ms", r.Iface, r.MAC, fms(r.Listen)), "")
-	if len(r.VPN) > 0 {
-		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+"): dhcp might not work on "+r.Iface), "")
-	}
-	if r.Multiple {
-		o.line("", "WARNING: multiple DHCP servers on "+r.Iface, "")
-	}
-	if r.Note != "" {
-		o.line("", r.Note, "")
-	}
-	for _, s := range r.Servers {
-		kv := func(k, v string) {
-			if v != "" {
-				o.line("", fmt.Sprintf("  %-18s %s", k, v), "")
-			}
-		}
-		head := "server " + s.ServerID
-		if s.ServerID == "" {
-			head = "server (no identifier)"
-		}
-		head += "  from " + s.SourceIP
-		if s.SourceMAC != "" {
-			head += " " + s.SourceMAC
-		}
-		head += "  after " + fms(s.After) + " ms"
-		o.line("", head, "")
-		kv("relay (giaddr)", s.Relay)
-		kv("offered", s.Offered)
-		kv("mask", s.Mask)
-		kv("router", s.Router)
-		kv("broadcast", s.Broadcast)
-		kv("lease / T1 / T2", strings.Trim(strings.Join([]string{s.Lease, s.T1, s.T2}, " / "), " /"))
-		kv("DNS", strings.Join(s.DNS, " "))
-		kv("domain", s.Domain)
-		kv("search", s.Search)
-		kv("NTP (42)", strings.Join(s.NTP, " "))
-		kv("time srv (4)", strings.Join(s.TimeSrv, " "))
-		kv("time offset (2)", s.TimeOff)
-		kv("TZ POSIX (100)", s.TZPOSIX)
-		kv("TZ name (101)", s.TZName)
-		if len(s.NTP) == 0 {
-			kv("NTP (42)", "none offered")
-		}
-		kv("routes (121)", s.Routes)
-		kv("MTU", s.MTU)
-		kv("hostname", s.Hostname)
-		kv("next-server", s.NextSrv)
-		kv("sname", s.SName)
-		kv("file", s.File)
-		kv("TFTP (66)", s.TFTP)
-		kv("boot file (67)", s.BootFile)
-		kv("TFTP (150)", s.TFTPList)
-		kv("WPAD (252)", s.WPAD)
-		kv("vendor (43)", s.Vendor)
-		keys := make([]string, 0, len(s.Other))
-		for k := range s.Other {
-			keys = append(keys, k)
-		}
-		sort.Slice(keys, func(i, j int) bool { a, _ := strconv.Atoi(keys[i]); b, _ := strconv.Atoi(keys[j]); return a < b })
-		for _, k := range keys {
-			kv("option "+k, s.Other[k])
-		}
-	}
-	o.line("", fmt.Sprintf("%d server(s)", len(r.Servers)), r.Status)
-	first := true
-	for _, c := range r.DNS {
-		sec := ""
-		if first {
-			sec, first = "DNS", false
-		}
-		if c.Error != "" {
-			o.line(sec, fmt.Sprintf("%-22s %s", c.Server, c.Error), "")
-		} else {
-			o.line(sec, fmt.Sprintf("%-22s %-8s %s ms", c.Server, c.Rcode, fms(c.Time)), "")
-		}
-	}
-	if r.DNSState == "" {
-		// DNS not tested (t only)
-	} else if len(r.DNS) == 0 {
-		o.line("DNS", "no DNS servers offered", r.DNSState)
-	} else {
-		ok := 0
-		for _, c := range r.DNS {
-			if c.OK {
-				ok++
-			}
-		}
-		o.line("", fmt.Sprintf("%d/%d DNS servers answer", ok, len(r.DNS)), r.DNSState)
-	}
-	if r.Time != nil {
-		renderDPTTime(o, *r.Time)
-	}
-}
-
-// RenderDPTTime writes a time section alone (the shell's time command).
-func RenderDPTTime(w io.Writer, t DPTTime, color bool) {
-	renderDPTTime(dptOut{w: w, color: color}, t)
 }

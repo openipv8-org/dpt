@@ -4,6 +4,7 @@ package dpt
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,13 +30,19 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode    string // "dpt", "dhcp", "info", "install", "upgrade", "shell", "help", "version"
-	Target  string
-	Opts    DPTDHCPOptions
-	JSON    bool
-	NoColor bool
-	Verbose bool
-	Select  bool // choose the interface from a list
+	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "shell", "help", "version"
+	Target string // dpt, smtp, ports: the address or name
+	// smtp <host> test <user> [<password>]: log in as User (Password ""
+	// is asked for)
+	SMTPUser, SMTPPassword string
+	// sweep [ports] [<network>]
+	SweepPorts   bool
+	SweepNetwork string
+	Opts         DPTDHCPOptions
+	JSON         bool
+	NoColor      bool
+	Verbose      bool
+	Select       bool // choose the interface from a list
 }
 
 type dptOpt struct {
@@ -50,9 +57,9 @@ var dptOpts = []dptOpt{
 	{"names", "", true, "names to resolve, a,b,c (google.com,microsoft.com,cloudflare.com,ietf.org,github.com)"},
 	{"ntp", "", true, "reference NTP servers, a,b (time.google.com,time.windows.com)"},
 	{"all", "", false, "test every address a name resolves to"},
-	{"iface", "", true, "dhcp: the interface to probe (the Ethernet one with the LAN gateway)"},
+	{"iface", "", true, "dhcp, sweep: the interface to probe (the Ethernet one with the LAN gateway)"},
 	{"listen", "", true, "dhcp: how long to collect offers (5)"},
-	{"select", "", false, "dhcp, info: list the interfaces and choose one"},
+	{"select", "", false, "dhcp, info, sweep: list the interfaces and choose one"},
 	{"random-mac", "", false, "dhcp: probe with a random MAC instead of the interface's (some routers' offers then never arrive)"},
 	{"4", "", false, "IPv4 only"},
 	{"6", "", false, "IPv6 only"},
@@ -92,6 +99,14 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	}
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
 	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)\n", prog)
+	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]]\n", prog)
+	fmt.Fprintf(&b, "                            ports 25, 465 and 587: greeting, STARTTLS or TLS, the certificate, AUTH;\n")
+	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given)\n")
+	fmt.Fprintf(&b, "       %s sweep [ports] [<network>]\n", prog)
+	fmt.Fprintf(&b, "                            ping every address on this network (or <network>, 10.0.0.0/24; an address: its /24),\n")
+	fmt.Fprintf(&b, "                            25 at a time; ports: then the %d common TCP ports of each that answers\n", len(DPTTopPorts))
+	fmt.Fprintf(&b, "       %s ports <host>     the %d common TCP ports of host\n", prog, len(DPTTopPorts))
+	fmt.Fprintf(&b, "       %s outside-ip       the address the internet sees (asks %s)\n", prog, OutsideIPURL)
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
@@ -162,6 +177,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		c.Mode = "shell"
 		return c, nil
 	}
+	var pos []string // the words that are not options
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		body, val, hasVal, isOpt, long := "", "", false, false, false
@@ -187,14 +203,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 			}
 		}
 		if !isOpt {
-			if c.Target != "" || c.Mode != "dpt" {
-				return nil, fmt.Errorf("one of dhcp, info, install, upgrade, an address or a name: not %q as well", Printable(a))
-			}
-			if l := strings.ToLower(a); l == "dhcp" || l == "info" || l == "install" || l == "upgrade" {
-				c.Mode = strings.ToLower(a)
-				continue
-			}
-			c.Target = a
+			pos = append(pos, a)
 			continue
 		}
 		body = strings.ToLower(body)
@@ -233,8 +242,14 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 	case "help", "version":
 		return c, nil
 	}
-	if c.Select && c.Mode != "dhcp" && c.Mode != "info" {
-		return nil, errors.New(dptOptName(st, "select") + " goes with dhcp or info")
+	if err := c.words(pos); err != nil {
+		return nil, err
+	}
+	if c.Select && c.Mode != "dhcp" && c.Mode != "info" && c.Mode != "sweep" {
+		return nil, errors.New(dptOptName(st, "select") + " goes with dhcp, info or sweep")
+	}
+	if c.Opts.Iface != "" && c.Mode != "dhcp" && c.Mode != "info" && c.Mode != "sweep" {
+		return nil, errors.New(dptOptName(st, "iface") + " goes with dhcp, info or sweep")
 	}
 	if c.Select && c.Opts.Iface != "" {
 		return nil, fmt.Errorf("%s or %s, not both", dptOptName(st, "select"), dptOptName(st, "iface"))
@@ -248,16 +263,87 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
 		}
+	case "smtp", "sweep", "ports", "outside-ip":
+		if c.Opts.Tests != (DPTTests{}) {
+			return nil, errors.New(c.Mode + " takes no test letters")
+		}
 	case "dhcp":
 		if c.Opts.Tests.Ping {
 			return nil, errors.New("dhcp takes t and d (the NTP and DNS servers offered): p does not apply")
 		}
 	default:
 		if c.Target == "" {
-			return nil, errors.New("give dhcp, info, install, upgrade, an address or a name")
+			return nil, errors.New("give " + dptModeList + ", an address or a name")
 		}
 	}
 	return c, nil
+}
+
+// dptModes are the words that choose a mode instead of naming a target.
+var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip"}
+
+const dptModeList = "dhcp, info, smtp, sweep, ports, outside-ip, install, upgrade"
+
+// words reads the words that are not options: a mode and its arguments,
+// or the target.
+func (c *DPTCommand) words(pos []string) error {
+	if len(pos) == 0 {
+		return nil
+	}
+	if l := strings.ToLower(pos[0]); slices.Contains(dptModes, l) {
+		c.Mode = l
+	} else {
+		c.Target = pos[0]
+	}
+	rest := pos[1:]
+	extra := func() error {
+		return fmt.Errorf("one of %s, an address or a name: not %q as well", dptModeList, Printable(rest[0]))
+	}
+	switch c.Mode {
+	case "smtp":
+		const use = "smtp <host> [test <user> [<password>]]"
+		if len(rest) == 0 || slices.Contains(dptModes, strings.ToLower(rest[0])) {
+			return errors.New(use)
+		}
+		c.Target, rest = rest[0], rest[1:]
+		if len(rest) == 0 {
+			return nil
+		}
+		if !strings.EqualFold(rest[0], "test") || len(rest) < 2 || len(rest) > 3 {
+			return errors.New(use)
+		}
+		c.SMTPUser = rest[1]
+		if len(rest) == 3 {
+			c.SMTPPassword = rest[2]
+		}
+	case "sweep":
+		for _, w := range rest {
+			switch {
+			case strings.EqualFold(w, "ports") && !c.SweepPorts:
+				c.SweepPorts = true
+			case c.SweepNetwork == "":
+				if _, err := ParseSweepNetwork(w); err != nil {
+					return err
+				}
+				c.SweepNetwork = w
+			default:
+				return errors.New("sweep [ports] [<network>]")
+			}
+		}
+		if c.SweepNetwork != "" && c.Opts.Iface != "" {
+			return errors.New("sweep: a network or an interface, not both")
+		}
+	case "ports":
+		if len(rest) != 1 {
+			return errors.New("ports <host>")
+		}
+		c.Target = rest[0]
+	default:
+		if len(rest) > 0 {
+			return extra()
+		}
+	}
+	return nil
 }
 
 func (c *DPTCommand) set(long, v string, st DPTArgStyle) error {

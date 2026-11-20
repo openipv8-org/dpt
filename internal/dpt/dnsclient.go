@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -461,4 +462,14 @@ func DNSFormatRData(t uint16, b []byte) string {
 		return unknown()
 	}
 	return unknown()
+}
+
+// DNSTypeNames are the type mnemonics DNSTypeByName knows, sorted.
+func DNSTypeNames() []string {
+	out := make([]string, 0, len(dnsClientTypes))
+	for n := range dnsClientTypes {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -223,5 +225,71 @@ func TestLineEditor(t *testing.T) {
 	r.plain = bufio.NewReader(strings.NewReader("\x04"))
 	if _, err := r.edit("> "); err != io.EOF {
 		t.Errorf("Ctrl-D: %v", err)
+	}
+}
+
+func TestComplete(t *testing.T) {
+	s, _ := newTestShell(t)
+	for _, c := range []struct{ before, add string }{
+		{"sw", "eep "},
+		{"out", "side-ip "},
+		{"sweep ", "ports "},
+		{"sweep p", "orts "},
+		{"smtp mail.test ", "test "},
+		{"smtp t", "est "},
+		{"set norec", "urse "},
+		{"set ty", "pe="},
+		{"set type=aa", "AA "},
+		{"nt", "pd="},
+	} {
+		add, _ := completeWord(c.before, s.complete)
+		if add != c.add {
+			t.Errorf("%q: %q, want %q", c.before, add, c.add)
+		}
+	}
+	// several with nothing more in common: the list, nothing added
+	if add, list := completeWord("s", s.complete); add != "" || len(list) < 4 {
+		t.Errorf("s: %q %v", add, list)
+	}
+	if add, _ := completeWord("p", s.complete); add != "" { // ping, ports
+		t.Errorf("p: %q", add)
+	}
+	if add, _ := completeWord("po", s.complete); add != "rts " {
+		t.Errorf("po: %q", add)
+	}
+}
+
+func TestNoPasswordKept(t *testing.T) {
+	for in, want := range map[string]string{
+		"smtp mail.test test jamie s3cret": "smtp mail.test test jamie",
+		"smtp test jamie s3cret":           "smtp test jamie",
+		"smtp mail.test test jamie":        "smtp mail.test test jamie",
+		"ping test x y":                    "ping test x y",
+	} {
+		if got, _ := withoutPassword(in); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	dir := t.TempDir()
+	r := newLineReader(os.Stdin, io.Discard, filepath.Join(dir, "h"))
+	r.redact = withoutPassword
+	r.remember("smtp m test u s3cret")
+	b, _ := os.ReadFile(filepath.Join(dir, "h"))
+	if strings.Contains(string(b), "s3cret") || len(r.hist) != 1 || strings.Contains(r.hist[0], "s3cret") {
+		t.Errorf("history: %q %v", b, r.hist)
+	}
+}
+
+func TestNetCommands(t *testing.T) {
+	s, out := newTestShell(t)
+	s.Do("smtp test")
+	s.Do("smtp h test u") // no terminal to ask at
+	s.Do("sweep 10.0.0.0/8")
+	s.Do("ports a b")
+	s.Do("help")
+	for _, w := range []string{"usage: smtp [host] [test <user> [<password>]]", "give the password", "more than 1024 addresses", "usage: ports [host]", "outside-ip", "sweep [ports] [network]"} {
+		if !strings.Contains(out.String(), w) {
+			t.Errorf("lacks %q:\n%s", w, out)
+		}
 	}
 }

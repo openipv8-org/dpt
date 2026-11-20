@@ -423,7 +423,7 @@ func uniq(in []string) []string {
 
 // RenderDPTInfo writes the machine's picture.
 func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
-	o := dptOut{w: w, color: color}
+	o := newOut(w, color)
 	when := func(t *time.Time) string { return t.Local().Format("2006-01-02 15:04") }
 	none := func(v []string) string {
 		if len(v) == 0 {
@@ -432,15 +432,15 @@ func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
 		return strings.Join(v, ", ")
 	}
 	if len(r.Ifaces) == 0 {
-		o.line("INFO", "no active Ethernet interface with an IPv4 address", "")
+		o.line("INFO", "no active Ethernet interface with an IPv4 address")
 	}
 	for _, x := range r.Ifaces {
 		head := x.Name + "  " + x.MAC + "  " + strings.Join(x.Addrs, " ")
 		if x.Gateway != "" {
 			head += "  gateway " + x.Gateway
 		}
-		o.line("INFO", head, "")
-		kv := func(k, v string) { o.line("", fmt.Sprintf("  %-18s %s", k, v), "") }
+		o.line("INFO", head)
+		kv := func(k, v string) { o.line("", fmt.Sprintf("  %-18s %s", k, v)) }
 		if l := x.Lease; l != nil {
 			kv("DHCP server", none([]string{l.Server}))
 			if l.Address != "" {
@@ -476,9 +476,9 @@ func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
 		}
 		return "  (" + s + ")"
 	}
-	o.line("SYSTEM", fmt.Sprintf("%-20s %s%s", "DNS", none(r.DNS), src(r.DNSSource)), "")
-	o.line("", fmt.Sprintf("%-20s %s%s", "NTP", none(r.NTP), src(r.NTPSource)), "")
+	o.line("SYSTEM", fmt.Sprintf("%-20s %s%s", "DNS", none(r.DNS), src(r.DNSSource)))
+	o.line("", fmt.Sprintf("%-20s %s%s", "NTP", none(r.NTP), src(r.NTPSource)))
 	if len(r.VPN) > 0 {
-		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+")"), "")
+		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+")"))
 	}
 }

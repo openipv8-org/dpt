@@ -10,6 +10,10 @@ the segment and what it hands out.
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
 dpt info                                            this machine's lease, DNS, NTP
+dpt smtp <host> [test <user> [<password>]]          SMTP on 25, 465, 587, and a login
+dpt sweep [ports] [<network>]                       live addresses (and their open ports)
+dpt ports <host>                                    the 50 common TCP ports of host
+dpt outside-ip                                      the address the internet sees
 dpt install | upgrade                               install, or update to the newest
 dpt                                                 interactive shell (nslookup and more)
 ```
@@ -71,6 +75,33 @@ you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
 to let dpt choose); trydhcp and info then use it. From a script
 --select never asks: use `--iface`.
 
+## SMTP, sweep, ports, outside-ip
+
+`dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start) and 587
+(STARTTLS) at once. For each one it shows the greeting, the TLS version,
+the certificate (checked against the name), and the AUTH methods offered.
+A port nothing listens on is NONE. A port that never answers is FAIL:
+many ISPs and clouds block outgoing 25. `test <user>` then logs in
+(AUTH PLAIN or LOGIN) where the password is safest. A port with TLS and a
+trusted certificate is used first. Next comes TLS with an untrusted
+certificate. A plain connection is used only when that is all the server
+works with, including when its STARTTLS fails. Among equally safe ports
+the order is 587, 465, then 25. A login that is not over trusted TLS is
+WARN, and says who could have read the password. Leave the password out and dpt asks for it
+without echoing it. In the shell, it is never written to the history.
+
+`dpt sweep` pings every address on this machine's network, 25 at a time
+(two echoes each, 1 s wait), and lists the ones that answer with their
+names. `sweep ports` then tries the 50 common TCP ports of each live
+address. `sweep 10.0.0.0/24` sweeps that network (an address alone: its
+/24; at most /22). Addresses that drop pings (Windows' firewall does by
+default) are not listed. `dpt ports <host>` tries the 50 ports on one
+address. `dpt outside-ip` asks https://ifconfig.me/ip.
+
+In the shell, these act on the current server when no host is given:
+`sweep` pings the /24 around it and `ports` tries its ports. Tab completes
+commands, `set` options, DNS types and interface names.
+
 ## Install
 
 Linux and macOS, into `/usr/local/bin/dpt` (the latest release, checked
@@ -82,6 +113,22 @@ curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/insta
 
 Run it again to update.
 
+macOS, the latest release to download:
+
+- [dpt-darwin-arm64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-arm64) for Apple Silicon (M1 and later)
+- [dpt-darwin-amd64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-amd64) for Intel Macs
+
+Windows: download the latest release,
+
+- [dpt-windows-amd64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-amd64.exe) for most PCs
+- [dpt-windows-arm64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-arm64.exe) for ARM (Snapdragon, Surface Pro X)
+
+then in PowerShell, in the folder it downloaded to:
+
+```
+.\dpt-windows-amd64.exe install
+```
+
 Once dpt is on a machine, it installs and updates itself:
 
 ```
@@ -92,8 +139,7 @@ dpt upgrade     download the newest release, check it against SHA256SUMS,
 ```
 
 Both ask for sudo (Windows: UAC) when they need it, and only when
-typed; from a script they say what they need and exit 2. Windows: `dpt-windows-amd64.exe` (or `-arm64`)
-from the release page.
+typed; from a script they say what they need and exit 2.
 
 ## Test on Windows
 

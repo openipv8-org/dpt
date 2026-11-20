@@ -4,6 +4,10 @@
 //
 //	dpt <address|dnsname> [-tdp] [options]   time, DNS and ping tests of the address
 //	dpt dhcp [-td] [options]                 every DHCP server on the segment and its offer
+//	dpt smtp <host> [test <user> [<pw>]]     SMTP ports 25, 465, 587 and a login
+//	dpt sweep [ports] [<network>]            live addresses (and their open ports)
+//	dpt ports <host>                         the common TCP ports of host
+//	dpt outside-ip                           the address the internet sees
 //	dpt                                      interactive shell: nslookup and more
 //
 // Test letters go together (t time, d DNS, p ping; none: all three).
@@ -15,6 +19,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -104,6 +109,27 @@ func run(args []string) int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+	// the status line while dpt works: only for a person watching
+	live := func() *dpt.Live {
+		if c.JSON {
+			return nil
+		}
+		if relayed {
+			if relayColor {
+				return dpt.NewLive(os.Stderr, 80)
+			}
+			return nil
+		}
+		fd := int(os.Stderr.Fd())
+		if !vt && runtime.GOOS == "windows" || !term.IsTerminal(fd) {
+			return nil
+		}
+		w, _, err := term.GetSize(fd)
+		if err != nil {
+			w = 80
+		}
+		return dpt.NewLive(os.Stderr, w)
+	}
 
 	switch c.Mode {
 	case "shell":
@@ -114,6 +140,7 @@ func run(args []string) int {
 		cancel() // the shell handles Ctrl-C per command
 		sh := shell.New(os.Stdout, sysdns.Servers(), c.Opts)
 		sh.Color = color
+		sh.NewLive = live
 		if err := sh.Run(os.Stdin); err != nil {
 			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitFail
@@ -122,6 +149,13 @@ func run(args []string) int {
 
 	case "install", "upgrade":
 		return runInstall(ctx, c.Mode, args, color)
+
+	case "smtp", "sweep", "ports", "outside-ip":
+		if err := mel.Interface(true); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitMEL
+		}
+		return runNet(ctx, c, color, live)
 
 	case "info":
 		r := dpt.DPTInfoGather(sysdns.Servers(), c.Opts.Iface)
@@ -147,7 +181,14 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
 		}
-		r, err := dpt.RunDPTDHCP(ctx, c.Opts)
+		o := c.Opts
+		p := dpt.NewDPTDHCPPrinter(os.Stdout, color)
+		if !c.JSON {
+			o.Live = live()
+			o.OnDHCPSection = func(r *dpt.DPTDHCPReport, sec string) { o.Live.Out(func() { p.Section(r, sec) }) }
+		}
+		r, err := dpt.RunDPTDHCP(ctx, o)
+		o.Live.Stop()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "MEL:", err)
 			return exitMEL
@@ -155,7 +196,7 @@ func run(args []string) int {
 		if c.JSON {
 			dpt.DPTJSON(os.Stdout, r)
 		} else {
-			dpt.RenderDPTDHCP(os.Stdout, r, color)
+			p.Summary(r)
 		}
 		if r.Failed() {
 			return exitFail
@@ -168,18 +209,31 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return exitMEL
 	}
+	o := c.Opts.DPTOptions
+	p := dpt.NewDPTPrinter(os.Stdout, color, c.Verbose)
+	if !c.JSON {
+		o.Live = live()
+		o.OnTarget = func(t dpt.DPTTarget) { o.Live.Out(func() { p.Target(t) }) }
+		o.OnSection = func(a *dpt.DPTAddrReport, sec string) { o.Live.Out(func() { p.Section(a, sec) }) }
+	}
+	defer o.Live.Stop()
+	o.Live.Set("resolve", "looking up "+c.Target)
 	ips, err := dpt.DPTResolve(ctx, c.Target, c.Opts.Family, nil)
+	o.Live.Drop("resolve")
 	if err != nil {
+		o.Live.Stop()
 		fmt.Fprintln(os.Stderr, "MEL:", err)
 		return exitMEL
 	}
 	if c.Opts.Tests.Effective().Ping {
 		if err := mel.ICMP(ips[0]); err != nil {
+			o.Live.Stop()
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
 		}
 	}
-	r, err := dpt.RunDPT(ctx, c.Target, c.Opts.DPTOptions)
+	r, err := dpt.RunDPT(ctx, c.Target, o)
+	o.Live.Stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "MEL:", err)
 		return exitMEL
@@ -187,7 +241,7 @@ func run(args []string) int {
 	if c.JSON {
 		dpt.DPTJSON(os.Stdout, r)
 	} else {
-		dpt.RenderDPT(os.Stdout, r, color, c.Verbose)
+		p.Summary(r)
 	}
 	if r.Failed() {
 		return exitFail
@@ -213,6 +267,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 		}
 	case "upgrade":
 		var err error
+		fmt.Println("checking the newest release on github.com/" + selfinstall.Repo + " ...")
 		if latest, err = selfinstall.LatestTag(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "dpt: cannot find the newest release:", err)
 			return exitFail
@@ -302,4 +357,116 @@ func firstErr(errs ...error) error {
 		}
 	}
 	return nil
+}
+
+// runNet is smtp, sweep, ports and outside-ip.
+func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt.Live) int {
+	out := func(v any, text func()) int {
+		if c.JSON {
+			dpt.DPTJSON(os.Stdout, v)
+		} else {
+			text()
+		}
+		return exitOK
+	}
+	var l *dpt.Live
+	if !c.JSON {
+		l = live()
+	}
+	defer l.Stop()
+	switch c.Mode {
+	case "smtp":
+		o := dpt.SMTPOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family, User: c.SMTPUser, Password: c.SMTPPassword}
+		if o.User != "" && o.Password == "" {
+			pw, err := readPassword(c.SMTPUser)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "dpt:", err)
+				return exitUsage
+			}
+			o.Password = pw
+		}
+		p := dpt.NewSMTPPrinter(os.Stdout, color, c.Verbose)
+		if !c.JSON {
+			o.Live = l
+			o.OnTarget = func(r *dpt.SMTPReport) { l.Out(func() { p.Target(r) }) }
+			o.OnPort = func(x *dpt.SMTPPort) { l.Out(func() { p.Port(x) }) }
+			o.OnLogin = func(x *dpt.SMTPLogin) { l.Out(func() { p.Login(x) }) }
+		}
+		r, err := dpt.RunSMTP(ctx, c.Target, o)
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "MEL:", err)
+			return exitMEL
+		}
+		out(r, func() { p.Summary(r) })
+		if r.Failed() {
+			return exitFail
+		}
+		return exitOK
+
+	case "sweep":
+		if err := mel.ICMP(net.IPv4(127, 0, 0, 1)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitMEL
+		}
+		o := dpt.SweepOptions{Iface: c.Opts.Iface, Ports: c.SweepPorts, Timeout: c.Opts.Timeout}
+		if c.SweepNetwork != "" {
+			o.Network, _ = dpt.ParseSweepNetwork(c.SweepNetwork)
+		}
+		p := dpt.NewSweepPrinter(os.Stdout, color)
+		if !c.JSON {
+			o.Live = l
+			o.OnNetwork = func(r *dpt.SweepReport) { l.Out(func() { p.Network(r) }) }
+			o.OnHost = func(h *dpt.SweepHost) { l.Out(func() { p.Host(h) }) }
+		}
+		r, err := dpt.RunSweep(ctx, o)
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "MEL:", err)
+			return exitMEL
+		}
+		return out(r, func() { p.Summary(r) })
+
+	case "ports":
+		r, err := dpt.RunPorts(ctx, c.Target, c.Opts.Family, c.Opts.Timeout, nil, l)
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "MEL:", err)
+			return exitMEL
+		}
+		return out(r, func() { dpt.RenderPorts(os.Stdout, r, color) })
+
+	default: // outside-ip
+		l.Set("outside", "asking "+dpt.OutsideIPURL)
+		r, err := dpt.RunOutsideIP(ctx, c.Opts.Family, c.Opts.Timeout)
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dpt:", err)
+			return exitFail
+		}
+		return out(r, func() { dpt.RenderOutsideIP(os.Stdout, r, color) })
+	}
+}
+
+// readPassword asks for the password with no echo on a terminal; from a
+// pipe it is the first line.
+func readPassword(user string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		fmt.Fprintf(os.Stderr, "password for %s: ", dpt.Printable(user))
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	l, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if l = strings.TrimRight(l, "\r\n"); l == "" {
+		if err == nil {
+			err = fmt.Errorf("no password")
+		}
+		return "", fmt.Errorf("smtp test %s: give the password, or type it at a terminal (%v)", dpt.Printable(user), err)
+	}
+	return l, nil
 }

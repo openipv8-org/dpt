@@ -29,6 +29,10 @@ type lineReader struct {
 	plain    *bufio.Reader
 	hist     []string
 	histFile string
+	// redact takes a secret out of a line before it is kept or echoed
+	redact func(string) (string, bool)
+	// complete gives the words that can end the line before the cursor
+	complete func(before string) []string
 }
 
 const histMax = 1000
@@ -67,6 +71,9 @@ func newLineReader(in *os.File, out io.Writer, histFile string) *lineReader {
 }
 
 func (r *lineReader) remember(l string) {
+	if r.redact != nil {
+		l, _ = r.redact(l)
+	}
 	if l == "" || len(r.hist) > 0 && r.hist[len(r.hist)-1] == l {
 		return
 	}
@@ -90,7 +97,13 @@ func (r *lineReader) ReadLine(prompt string) (string, error) {
 			return "", err
 		}
 		l = strings.TrimRight(l, "\r\n")
-		io.WriteString(r.out, l+"\n")
+		shown := l
+		if r.redact != nil {
+			if t, cut := r.redact(l); cut {
+				shown = t + " ********"
+			}
+		}
+		io.WriteString(r.out, shown+"\n")
 		return l, nil
 	}
 	fd := int(r.in.Fd())
@@ -139,6 +152,18 @@ func (r *lineReader) edit(prompt string) (string, error) {
 		case 3: // Ctrl-C
 			io.WriteString(r.out, "^C")
 			return "", errInterrupt
+		case '\t':
+			if r.complete == nil {
+				continue
+			}
+			word, list := completeWord(string(buf[:pos]), r.complete)
+			if word != "" {
+				buf = append(buf[:pos], append([]rune(word), buf[pos:]...)...)
+				pos += len([]rune(word))
+			} else if len(list) > 1 {
+				// nothing more in common: show the choices under the line
+				io.WriteString(r.out, "\r\n"+strings.Join(list, "  ")+"\r\n")
+			}
 		case 4: // Ctrl-D
 			if len(buf) == 0 {
 				return "", io.EOF
@@ -258,4 +283,76 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// completeWord is what Tab adds to the word before the cursor: the rest
+// of the one candidate (and a space), or what all the candidates have in
+// common; list is the candidates when there are several.
+func completeWord(before string, complete func(string) []string) (add string, list []string) {
+	word := before[strings.LastIndexByte(before, ' ')+1:]
+	for _, c := range complete(before) {
+		if strings.HasPrefix(strings.ToLower(c), strings.ToLower(word)) {
+			list = append(list, c)
+		}
+	}
+	if len(list) == 0 {
+		return "", nil
+	}
+	if len(list) == 1 {
+		add = list[0][len(word):]
+		if !strings.HasSuffix(list[0], "=") {
+			add += " "
+		}
+		return add, list
+	}
+	common := list[0]
+	for _, c := range list[1:] {
+		for !strings.HasPrefix(strings.ToLower(c), strings.ToLower(common)) {
+			common = common[:len(common)-1]
+		}
+	}
+	return common[len(word):], list
+}
+
+// ReadSecret reads a line with no echo: a password.
+func (r *lineReader) ReadSecret(prompt string) (string, error) {
+	io.WriteString(r.out, prompt)
+	if !r.tty {
+		l, err := r.plain.ReadString('\n')
+		io.WriteString(r.out, "\n")
+		if err != nil && l == "" {
+			return "", err
+		}
+		return strings.TrimRight(l, "\r\n"), nil
+	}
+	fd := int(r.in.Fd())
+	st, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(fd, st)
+	defer io.WriteString(r.out, "\r\n")
+	var buf []rune
+	for {
+		c, _, err := r.plain.ReadRune()
+		if err != nil {
+			return "", err
+		}
+		switch c {
+		case '\r', '\n':
+			return string(buf), nil
+		case 3, 4: // Ctrl-C, Ctrl-D
+			return "", errInterrupt
+		case 21: // Ctrl-U
+			buf = buf[:0]
+		case 127, 8:
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+			}
+		default:
+			if c >= ' ' && c != utf8.RuneError {
+				buf = append(buf, c)
+			}
+		}
+	}
 }

@@ -447,7 +447,7 @@ func TestDPTTimeLocalClock(t *testing.T) {
 	}{
 		{0, DPTOK, " ms "}, // in step: ahead or behind by noise
 		{200 * time.Millisecond, DPTWarn, "200."},
-		{-200 * time.Millisecond, DPTWarn, "ms ahead of the reference servers"},
+		{-200 * time.Millisecond, DPTWarn, "ms   ahead of the reference servers"},
 		{3 * time.Second, DPTFail, "behind"},
 	} {
 		a := fakeNTP(t, ntpServerAhead(c.ahead, 1, 0))
@@ -458,7 +458,7 @@ func TestDPTTimeLocalClock(t *testing.T) {
 		}
 		var buf bytes.Buffer
 		RenderDPTTime(&buf, tm, false)
-		if !strings.Contains(buf.String(), "this clock is") || !strings.Contains(buf.String(), c.words) {
+		if !strings.Contains(buf.String(), "this clock ") || !strings.Contains(buf.String(), c.words) {
 			t.Errorf("servers %v ahead, render lacks %q:\n%s", c.ahead, c.words, buf.String())
 		}
 	}
