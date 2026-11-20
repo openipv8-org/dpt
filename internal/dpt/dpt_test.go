@@ -367,6 +367,13 @@ func TestParseDPTArgs(t *testing.T) {
 	if c, _ := ParseDPTArgs([]string{"/?"}, DPTStyleWindows); c.Mode != "help" {
 		t.Error("/? is help")
 	}
+	for _, st := range []DPTArgStyle{DPTStyleUnix, DPTStyleWindows} {
+		for _, w := range []string{"version", "Version", "help"} {
+			if c, err := ParseDPTArgs([]string{w}, st); err != nil || c.Mode != strings.ToLower(w) {
+				t.Errorf("dpt %s: mode %v, err %v", w, c, err)
+			}
+		}
+	}
 	for _, c := range []struct {
 		st   DPTArgStyle
 		args string

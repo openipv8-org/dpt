@@ -238,6 +238,13 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 			return nil, err
 		}
 	}
+	// version and help alone are the command, not a host to look up: a
+	// one-word name with no dot is never a target anyone means here
+	if len(pos) == 1 {
+		if l := strings.ToLower(pos[0]); l == "version" || l == "help" {
+			c.Mode = l
+		}
+	}
 	switch c.Mode {
 	case "help", "version":
 		return c, nil
