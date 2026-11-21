@@ -98,7 +98,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 		tests = "/tdp"
 	}
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
-	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)\n", prog)
+	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers, clock (sends nothing)\n", prog)
 	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]]\n", prog)
 	fmt.Fprintf(&b, "                            ports 25, 465 and 587: greeting, STARTTLS or TLS, the certificate, AUTH;\n")
 	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given)\n")

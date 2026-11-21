@@ -9,7 +9,7 @@ the segment and what it hands out.
 ```
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
-dpt info                                            this machine's lease, DNS, NTP
+dpt info                                            this machine's lease, DNS, NTP, clock
 dpt smtp <host> [test <user> [<password>]]          SMTP on 25, 465, 587, and a login
 dpt sweep [ports] [<network>]                       live addresses (and their open ports)
 dpt ports <host>                                    the 50 common TCP ports of host
@@ -65,8 +65,12 @@ FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 each interface: address, gateway, and the DHCP lease it holds (server,
 obtained, expires, the DNS and NTP servers in it); then the DNS and NTP
 servers the machine uses (resolv.conf; chrony, timesyncd or ntpd; macOS
-Date & Time; Windows Time). Some Linux DHCP clients keep the lease
-readable by root only: `sudo dpt info` shows it.
+Date & Time; Windows Time). Then the clock, always: the time and zone,
+whether the system sets it itself (NTP, or the domain on Windows) or it
+was set by hand, whether it is in sync, when it last was and how far
+off, and where the time came from (Windows: "this machine's own clock"
+when no server is set). Some Linux DHCP clients keep the lease readable
+by root only: `sudo dpt info` shows it.
 
 To test a particular interface, `--select` (`/select` on Windows) lists
 every Ethernet interface that is up, with an address or not, and lets

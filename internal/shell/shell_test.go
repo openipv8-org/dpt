@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -290,6 +291,25 @@ func TestNetCommands(t *testing.T) {
 	for _, w := range []string{"usage: smtp [host] [test <user> [<password>]]", "give the password", "more than 1024 addresses", "usage: ports [host]", "outside-ip", "sweep [ports] [network]"} {
 		if !strings.Contains(out.String(), w) {
 			t.Errorf("lacks %q:\n%s", w, out)
+		}
+	}
+}
+
+func TestAddressColumns(t *testing.T) {
+	var ips []string
+	for i := 1; i <= 9; i++ {
+		ips = append(ips, fmt.Sprintf("172.235.57.%d", 100+i))
+	}
+	got := addressColumns(ips, 80)
+	want := "Addresses: 172.235.57.101  172.235.57.102  172.235.57.103  172.235.57.104\n" +
+		"           172.235.57.105  172.235.57.106  172.235.57.107  172.235.57.108\n" +
+		"           172.235.57.109\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+		if len(l) > 80 {
+			t.Errorf("line over 80: %q", l)
 		}
 	}
 }

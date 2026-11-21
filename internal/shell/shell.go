@@ -518,10 +518,37 @@ func (s *Shell) lookup(name, server string) {
 	if !a.AA {
 		s.printf("Non-authoritative answer:\n")
 	}
-	for _, r := range a.Answer {
-		s.record(r)
+	for i := 0; i < len(a.Answer); {
+		r := a.Answer[i]
+		// a name's run of addresses: Name once, then the addresses across
+		j := i + 1
+		if isAddr(r.Type) {
+			for j < len(a.Answer) && isAddr(a.Answer[j].Type) && strings.EqualFold(a.Answer[j].Name, r.Name) {
+				j++
+			}
+		}
+		if j-i > 1 {
+			var ips []string
+			for _, x := range a.Answer[i:j] {
+				ips = append(ips, dpt.Safe(dpt.DNSFormatRData(x.Type, x.Data)))
+			}
+			s.printf("Name:\t%s\n%s", strings.TrimSuffix(r.Name, "."), addressColumns(ips, 80))
+		} else {
+			s.record(r)
+		}
+		i = j
 	}
 	s.printf("\n")
+}
+
+func isAddr(t uint16) bool { return t == dpt.DNSTypeA || t == dpt.DNSTypeAAAA }
+
+// addressColumns is "Addresses:" and the addresses in columns to its
+// right, as many to a line as fit in width, the rest wrapped under them.
+func addressColumns(ips []string, width int) string {
+	const head = "Addresses: "
+	rows := dpt.Columns(ips, width-len(head))
+	return head + strings.Join(rows, "\n"+strings.Repeat(" ", len(head))) + "\n"
 }
 
 // record writes one record as nslookup does.

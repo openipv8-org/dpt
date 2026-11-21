@@ -130,11 +130,43 @@ func NewDPTPrinter(w io.Writer, color, verbose bool) *DPTPrinter {
 // Target writes the TARGET section.
 func (p *DPTPrinter) Target(t DPTTarget) {
 	s := p.o.bold(t.Input)
+	p.many = len(t.Tested) > 1
+	if len(t.Addresses) > 3 {
+		// many addresses: in columns under the name, wrapped to fit
+		p.o.line("TARGET", s+fmt.Sprintf("  (%d addresses)", len(t.Addresses)))
+		for _, row := range Columns(t.Addresses, 80-10) {
+			p.o.line("", row)
+		}
+		return
+	}
 	if len(t.Addresses) > 1 || len(t.Addresses) == 1 && t.Addresses[0] != t.Input {
 		s += "  (" + strings.Join(t.Addresses, " ") + ")"
 	}
-	p.many = len(t.Tested) > 1
 	p.o.line("TARGET", s)
+}
+
+// Columns lays items out in even columns, as many to a row as fit in
+// width; the last item of a row has no padding after it.
+func Columns(items []string, width int) []string {
+	col := 0
+	for _, it := range items {
+		col = max(col, len(it)+2)
+	}
+	per := max(1, (width+2)/col)
+	var rows []string
+	for k := 0; k < len(items); k += per {
+		var b strings.Builder
+		end := min(k+per, len(items))
+		for i := k; i < end; i++ {
+			if i == end-1 {
+				b.WriteString(items[i])
+			} else {
+				fmt.Fprintf(&b, "%-*s", col, items[i])
+			}
+		}
+		rows = append(rows, b.String())
+	}
+	return rows
 }
 
 // Section writes one section of a: ADDRESS, PING, DNS, TIME or FEATURES.

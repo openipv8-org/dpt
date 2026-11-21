@@ -31,6 +31,7 @@ type DPTInfo struct {
 	NTP       []string       `json:"ntp_servers"`
 	NTPSource string         `json:"ntp_source,omitempty"`
 	VPN       []string       `json:"vpn_tunnel,omitempty"`
+	Clock     *DPTClock      `json:"clock,omitempty"`
 }
 
 // DPTInfoIface is one interface.
@@ -70,6 +71,7 @@ const (
 func DPTInfoGather(dns []string, iface string) *DPTInfo {
 	r := &DPTInfo{DNS: dns, DNSSource: infoDNSSource(), VPN: DPTVPNTunnels()}
 	r.NTP, r.NTPSource = infoNTP()
+	r.Clock = DPTClockGather()
 	gw := gateways()
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
@@ -481,4 +483,5 @@ func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
 	if len(r.VPN) > 0 {
 		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+")"))
 	}
+	renderClock(o, r.Clock)
 }

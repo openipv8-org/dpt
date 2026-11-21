@@ -453,7 +453,7 @@ func TestDPTTimeLocalClock(t *testing.T) {
 		words  string
 	}{
 		{0, DPTOK, " ms "}, // in step: ahead or behind by noise
-		{200 * time.Millisecond, DPTWarn, "200."},
+		{200 * time.Millisecond, DPTWarn, "ms   behind the reference servers"}, // 200 and a little: the replies take time
 		{-200 * time.Millisecond, DPTWarn, "ms   ahead of the reference servers"},
 		{3 * time.Second, DPTFail, "behind"},
 	} {
