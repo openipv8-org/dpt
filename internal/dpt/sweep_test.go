@@ -161,7 +161,11 @@ func TestParseNetArgs(t *testing.T) {
 			t.Errorf("%q: %v %+v", c.args, err, cmd)
 		}
 	}
-	for _, a := range []string{"smtp", "smtp h test", "smtp h login u", "smtp h test u p x", "sweep 10.0.0.0/8",
+	// smtp alone: asked for at the terminal
+	if c, err := ParseDPTArgs([]string{"smtp"}, DPTStyleUnix); err != nil || c.Mode != "smtp" || c.Target != "" {
+		t.Errorf("smtp alone: %v %+v", err, c)
+	}
+	for _, a := range []string{"smtp h test", "smtp h login u", "smtp h test u p x", "sweep 10.0.0.0/8",
 		"sweep a b", "ports", "ports a b", "outside-ip x", "smtp h -t", "ports h --iface en0", "sweep 10.0.0.1 --iface en0"} {
 		if _, err := ParseDPTArgs(strings.Fields(a), DPTStyleUnix); err == nil {
 			t.Errorf("%q taken", a)

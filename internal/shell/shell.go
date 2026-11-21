@@ -241,6 +241,7 @@ dpt:
   interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
+  smtp                    asks, a line at a time: the server, a login, a test message
   smtp [host]             SMTP on 25, 465, 587: greeting, STARTTLS or TLS, certificate, AUTH
   smtp [host] test <user> [password]
                           and log in: over trusted TLS when there is one, else untrusted TLS,

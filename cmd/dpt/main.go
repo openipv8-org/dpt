@@ -380,6 +380,24 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 	defer l.Stop()
 	switch c.Mode {
 	case "smtp":
+		if c.Target == "" {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Fprintln(os.Stderr, "dpt:", dpt.SMTPUse)
+				return exitUsage
+			}
+			l.Stop()
+			a, err := askSMTP()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "dpt:", err)
+				return exitUsage
+			}
+			fmt.Fprintf(os.Stderr, "  (the same as: dpt %s)\n\n", a.Command())
+			c.Target, c.SMTPUser, c.SMTPPassword, c.SMTPFrom, c.SMTPTo = a.Host, a.User, a.Password, a.From, a.To
+			if !c.JSON {
+				l = live() // the status line, stopped while asking
+				defer l.Stop()
+			}
+		}
 		o := dpt.SMTPOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family, User: c.SMTPUser, Password: c.SMTPPassword,
 			From: c.SMTPFrom, To: c.SMTPTo, Agent: "dpt " + version}
 		if o.User != "" && o.Password == "" {
@@ -452,6 +470,27 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		return out(r, func() { dpt.RenderOutsideIP(os.Stdout, r, color) })
 	}
+}
+
+// askSMTP asks at the terminal what smtp is to test.
+func askSMTP() (dpt.SMTPAsked, error) {
+	in := bufio.NewReader(os.Stdin)
+	ask := func(prompt string) (string, error) {
+		fmt.Fprint(os.Stderr, prompt)
+		l, err := in.ReadString('\n')
+		if err != nil {
+			fmt.Fprintln(os.Stderr)
+			return "", err
+		}
+		return strings.TrimRight(l, "\r\n"), nil
+	}
+	secret := func(prompt string) (string, error) {
+		fmt.Fprint(os.Stderr, prompt)
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		return string(b), err
+	}
+	return dpt.SMTPAsk("", ask, secret, func(l string) { fmt.Fprintln(os.Stderr, l) })
 }
 
 // readPassword asks for the password with no echo on a terminal; from a

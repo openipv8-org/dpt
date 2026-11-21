@@ -33,6 +33,7 @@ type lineReader struct {
 	redact func(string) (string, bool)
 	// complete gives the words that can end the line before the cursor
 	complete func(before string) []string
+	asking   bool // an answer to a question: not kept in the history
 }
 
 const histMax = 1000
@@ -115,10 +116,20 @@ func (r *lineReader) ReadLine(prompt string) (string, error) {
 	defer term.Restore(fd, st)
 	l, err := r.edit(prompt)
 	io.WriteString(r.out, "\r\n")
-	if err == nil {
+	if err == nil && !r.asking {
 		r.remember(strings.TrimSpace(l))
 	}
 	return l, err
+}
+
+// Ask reads an answer to a question: like ReadLine, with no completion
+// and nothing kept in the history.
+func (r *lineReader) Ask(prompt string) (string, error) {
+	r.asking = true
+	complete := r.complete
+	r.complete = nil
+	defer func() { r.asking, r.complete = false, complete }()
+	return r.ReadLine(prompt)
 }
 
 // edit is the raw-mode editor: Emacs keys and the arrows.

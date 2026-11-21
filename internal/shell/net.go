@@ -22,12 +22,29 @@ func (s *Shell) serverName() string {
 }
 
 // smtp [host] [test <user> [<password>]] [from <address>] [to <address>];
-// with no host, the last smtp host (or the current server).
+// with no host, the last smtp host (or the current server).  smtp alone
+// asks, a line at a time, what to test.
 func (s *Shell) smtp(args []string) {
 	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
 	host := s.smtpHost
 	if host == "" {
 		host = s.serverName()
+	}
+	if len(args) == 0 && s.lr != nil {
+		// the default: the last smtp host, or a server set by name (not
+		// a DNS server's address)
+		def := s.smtpHost
+		if def == "" {
+			def = s.srvName
+		}
+		a, err := dpt.SMTPAsk(def, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
+		if err != nil {
+			s.printf("*** %v\n", err)
+			return
+		}
+		s.printf("  (the same as: %s)\n\n", a.Command())
+		s.runSMTP(a.Host, a.User, a.Password, a.From, a.To)
+		return
 	}
 	if len(args) > 0 && !strings.EqualFold(args[0], "test") && !strings.EqualFold(args[0], "from") && !strings.EqualFold(args[0], "to") {
 		host, args = args[0], args[1:]
@@ -57,6 +74,10 @@ func (s *Shell) smtp(args []string) {
 		}
 		pass = p
 	}
+	s.runSMTP(host, user, pass, from, to)
+}
+
+func (s *Shell) runSMTP(host, user, pass, from, to string) {
 	s.smtpHost = host
 	ctx, cancel := s.ctx()
 	defer cancel()
