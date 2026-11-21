@@ -189,12 +189,12 @@ func TestCommands(t *testing.T) {
 		}
 	}
 	out.Reset()
-	s.Do("dns=192.0.2.99")
-	if s.server != "192.0.2.99" || !strings.Contains(out.String(), "dns=192.0.2.99") {
-		t.Errorf("dns=:\n%s", out)
+	s.Do("fallback=192.0.2.99")
+	if s.server != "192.0.2.99" || !strings.Contains(out.String(), "fallback=192.0.2.99") {
+		t.Errorf("fallback=:\n%s", out)
 	}
 	s.Do("root")
-	if s.server != rootServer || !s.dnsSet {
+	if s.target != "a.root-servers.net" || s.targetIP != rootServer || s.server != "192.0.2.99" {
 		t.Errorf("root: %s %q", s.server, s.prompt())
 	}
 }
@@ -316,42 +316,76 @@ func TestAddressColumns(t *testing.T) {
 
 func TestServerSetting(t *testing.T) {
 	s, out := newTestShell(t)
+	// the fallback is 8.8.8.8, not the start's DNS server
+	if s.server != "8.8.8.8" || s.initial == "8.8.8.8" {
+		t.Fatalf("fallback %q, start %q", s.server, s.initial)
+	}
+	// here: the test's DNS server stands in for 8.8.8.8
+	old := fallbackDNS
+	defer func() { fallbackDNS = old }()
+	fallbackDNS, s.server = s.initial, s.initial
 	dns := s.server
 	// at the start the server is the DNS server, as nslookup's
 	if s.prompt() != "dpt ["+dns+"]> " || s.target != dns || s.targetSet {
 		t.Errorf("start: prompt %q", s.prompt())
 	}
-	// server: the one server; dns= stays the fallback
+	// server: the one server; fallback= stays
 	s.Do("server 127.0.0.2")
 	if s.prompt() != "dpt [127.0.0.2]> " || s.server != dns || s.targetIP != "127.0.0.2" {
-		t.Errorf("prompt %q dns %q", s.prompt(), s.server)
+		t.Errorf("prompt %q fallback %q", s.prompt(), s.server)
 	}
 	// it has no DNS service (nothing on 127.0.0.2): a lookup says so and
 	// uses the fallback, which answers
 	out.Reset()
 	s.Do("www.example.test")
-	if !strings.Contains(out.String(), "this server, 127.0.0.2, has no DNS service: using "+dns) ||
+	if !strings.Contains(out.String(), "*** [127.0.0.2] is not working: falling back to ["+dns+"]") ||
 		!strings.Contains(out.String(), "Address: 192.0.2.7") || !strings.Contains(out.String(), "Server:\t\t"+dns) {
 		t.Errorf("fallback:\n%s", out)
 	}
-	// set dns=: lookups always go there, the server stays
-	s.Do("set dns=127.0.0.1")
-	if s.target != "127.0.0.2" || !s.dnsSet || s.dnsOrder()[0] != "127.0.0.1" || len(s.dnsOrder()) != 1 {
-		t.Errorf("dns=: server %q order %v", s.target, s.dnsOrder())
+	// the fallback not answering either: the lookup fails, nothing further
+	s.Do("set fallback=127.0.0.3")
+	out.Reset()
+	s.Do("www.example.test")
+	if !strings.Contains(out.String(), "falling back to [127.0.0.3]") || !strings.Contains(out.String(), "no servers could be reached") ||
+		strings.Contains(out.String(), "192.0.2.7") {
+		t.Errorf("fallback not answering:\n%s", out)
+	}
+	// lserver is set fallback=
+	s.Do("lserver " + dns)
+	if s.server != dns || s.target != "127.0.0.2" {
+		t.Errorf("lserver: fallback %q server %q", s.server, s.target)
 	}
 	out.Reset()
 	s.settings()
-	if !strings.Contains(out.String(), "server               127.0.0.2") || !strings.Contains(out.String(), "dns=                 127.0.0.1   always") {
+	if !strings.Contains(out.String(), "server               127.0.0.2") || !strings.Contains(out.String(), "fallback=            "+dns) {
 		t.Errorf("settings:\n%s", out)
 	}
-	s.Do("set dns=")
-	if s.dnsSet || s.server != dns {
-		t.Errorf("dns= cleared: %v %q", s.dnsSet, s.server)
+	out.Reset()
+	s.Do("set all")
+	if !strings.Contains(out.String(), "Default server: 127.0.0.2") || !strings.Contains(out.String(), "fallback = "+dns) {
+		t.Errorf("set all:\n%s", out)
 	}
-	// a command given a host sets the server
+	// set fallback clear: the server only, no fallback
+	s.Do("set fallback clear")
+	if s.server != "" || len(s.dnsOrder()) != 1 || s.dnsOrder()[0] != "127.0.0.2" {
+		t.Errorf("fallback cleared: %q %v", s.server, s.dnsOrder())
+	}
+	out.Reset()
+	s.Do("www.example.test")
+	if strings.Contains(out.String(), "falling back") || !strings.Contains(out.String(), "no servers could be reached") {
+		t.Errorf("no fallback:\n%s", out)
+	}
+	s.Do("set fallback=" + dns)
+	// a host given to a command is for that command only
 	s.Do("connect 127.0.0.1 1")
-	if s.target != "127.0.0.1" {
-		t.Errorf("after connect: %q", s.target)
+	s.Do("ports 127.0.0.1 1")
+	if s.target != "127.0.0.2" {
+		t.Errorf("after connect and ports: %q", s.target)
+	}
+	// root: a root server is the server, as nslookup's
+	s.Do("root")
+	if s.target != "a.root-servers.net" || s.targetIP != rootServer || s.server != dns {
+		t.Errorf("root: %q %q fallback %q", s.target, s.targetIP, s.server)
 	}
 	// clear: back to the start's DNS server
 	s.Do("server clear")
@@ -359,9 +393,6 @@ func TestServerSetting(t *testing.T) {
 		t.Errorf("after clear: %q", s.target)
 	}
 	// a host that does not resolve does not become the server
-	s.Do("smtp no-such-host.invalid")
-	s.Do("connect no-such-host.invalid 25")
-	s.Do("ports no-such-host.invalid")
 	s.Do("server no-such-host.invalid")
 	if s.target != dns {
 		t.Errorf("an unresolved host became the server: %q", s.target)

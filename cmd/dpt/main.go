@@ -386,7 +386,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 	case "smtp":
 		if c.Target == "" {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
-				fmt.Fprintln(os.Stderr, "dpt:", dpt.SMTPUse)
+				fmt.Fprintln(os.Stderr, "dpt: smtp prompt asks at a terminal:", dpt.SMTPUse)
 				return exitUsage
 			}
 			l.Stop()
@@ -548,7 +548,8 @@ func stdinHasData() bool {
 	return m&os.ModeNamedPipe != 0 || m.IsRegular() && st.Size() > 0
 }
 
-// askSMTP asks at the terminal what smtp is to test.
+// askSMTP asks at the terminal what smtp is to test, offering the last
+// answers (kept in .dpt).
 func askSMTP() (dpt.SMTPAsked, error) {
 	in := bufio.NewReader(os.Stdin)
 	ask := func(prompt string) (string, error) {
@@ -566,7 +567,14 @@ func askSMTP() (dpt.SMTPAsked, error) {
 		fmt.Fprintln(os.Stderr)
 		return string(b), err
 	}
-	return dpt.SMTPAsk("", dpt.SMTPAsked{}, ask, secret, func(l string) { fmt.Fprintln(os.Stderr, l) })
+	a, err := dpt.SMTPAsk("", dpt.LoadSMTPAsked(), ask, secret, func(l string) { fmt.Fprintln(os.Stderr, l) })
+	if err == nil {
+		// offered next time
+		if err := dpt.SaveSMTPAsked(a); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: the answers were not kept for next time:", err)
+		}
+	}
+	return a, err
 }
 
 // readPassword asks for the password with no echo on a terminal; from a

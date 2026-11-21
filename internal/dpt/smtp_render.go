@@ -88,6 +88,43 @@ func (p *SMTPPrinter) Port(x *SMTPPort) {
 	} else if x.Note != "" {
 		o.line("", o.by(x.Status, x.Note))
 	}
+	if x.Intercept != "" {
+		o.line("", o.yellow(x.Intercept))
+	}
+}
+
+// FromHere writes what mail can and cannot do from here, and the verdict:
+//
+//	FROM HERE possible      25    STARTTLS, trusted; login PLAIN LOGIN
+//	          not possible  587   timed out: a firewall is dropping it (...)
+//
+//	VERDICT   mail from here works on 25 with STARTTLS
+func (p *SMTPPrinter) FromHere(r *SMTPReport) {
+	o := p.o
+	sec := "FROM HERE"
+	for i, c := range r.Possible {
+		head := ""
+		if i == 0 {
+			head = "possible"
+		}
+		o.line(sec, fmt.Sprintf("%-13s %-5d %s", head, c.Port, c.What))
+		sec = ""
+	}
+	for i, c := range r.NotPossible {
+		head := ""
+		if i == 0 {
+			head = "not possible"
+		}
+		o.line(sec, fmt.Sprintf("%-13s %-5d %s", head, c.Port, o.dim(c.What)))
+		sec = ""
+	}
+	if r.Verdict != "" {
+		v := o.bold(r.Verdict)
+		if len(r.Possible) == 0 {
+			v = o.red(r.Verdict)
+		}
+		o.line("VERDICT", v)
+	}
 }
 
 // Login writes the LOGIN section.
@@ -138,8 +175,10 @@ func (p *SMTPPrinter) Send(m *SMTPSend) {
 	}
 }
 
-// Summary writes the rule and 25/smtp OK   465/submissions NONE ...
+// Summary writes what mail can do from here, the verdict, then the rule
+// and 25/smtp OK   465/submissions NONE ...
 func (p *SMTPPrinter) Summary(r *SMTPReport) {
+	p.FromHere(r)
 	var names, st []string
 	for _, x := range r.Ports {
 		names, st = append(names, fmt.Sprintf("%d/%s", x.Port, x.Name)), append(st, x.Status)

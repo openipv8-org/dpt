@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/textproto"
 	"os"
@@ -24,6 +25,13 @@ import (
 //	25   smtp: server to server, STARTTLS
 //	465  submissions: TLS from the first byte (RFC 8314)
 //	587  submission: STARTTLS, then AUTH
+//	2525, 8025  submission elsewhere: STARTTLS, then AUTH; providers
+//	     (smtp2go and others) offer them where 25 and 587 are blocked
+//
+// It says in plain words why a port failed, spots a firewall inspecting
+// SMTP (the greeting masked, STARTTLS removed) and an answer from
+// something other than the server, and ends with what mail can and
+// cannot do from here.
 //
 // With a user it then logs in (AUTH PLAIN or LOGIN) where the password
 // is safest: TLS with a trusted certificate, else TLS with one that is
@@ -35,17 +43,21 @@ type SMTPPortSpec struct {
 	Port     int
 	Implicit bool   // TLS from the first byte; else STARTTLS
 	Name     string // smtp, submissions, submission
+	// Alt: a port only some providers use; nothing there is no failure
+	Alt bool
 }
 
 // SMTPPorts are the ports tested, in order.
 var SMTPPorts = []SMTPPortSpec{
-	{25, false, "smtp"},
-	{465, true, "submissions"},
-	{587, false, "submission"},
+	{25, false, "smtp", false},
+	{465, true, "submissions", false},
+	{587, false, "submission", false},
+	{2525, false, "alt-submission", true},
+	{8025, false, "alt-submission", true},
 }
 
 // smtpLoginOrder is where a login is tried first: the submission ports.
-var smtpLoginOrder = []int{587, 465, 25}
+var smtpLoginOrder = []int{587, 465, 2525, 8025, 25}
 
 // SMTPOptions is one smtp run.
 type SMTPOptions struct {
@@ -113,7 +125,17 @@ type SMTPPort struct {
 	Error      string   `json:"error,omitempty"`
 	Note       string   `json:"note,omitempty"` // why it is WARN
 	NoService  bool     `json:"no_service,omitempty"`
-	Status     string   `json:"status"`
+	// Inspected: a firewall rewrites SMTP on this port (what gave it away)
+	Inspected string `json:"firewall_inspection,omitempty"`
+	// Intercept: something other than the server seems to answer (why)
+	Intercept string `json:"intercepted,omitempty"`
+	Status    string `json:"status"`
+}
+
+// SMTPCan is one line of what mail can or cannot do from here.
+type SMTPCan struct {
+	Port int    `json:"port"`
+	What string `json:"what"`
 }
 
 // SMTPLogin is the login.
@@ -143,12 +165,16 @@ type SMTPSend struct {
 
 // SMTPReport is an smtp run.
 type SMTPReport struct {
-	Target  DPTTarget  `json:"target"`
-	MX      []string   `json:"mx,omitempty"` // the name's MX hosts, when it has any
-	Ports   []SMTPPort `json:"ports"`
-	Login   *SMTPLogin `json:"login,omitempty"`
-	Send    *SMTPSend  `json:"send,omitempty"`
-	Started time.Time  `json:"started"`
+	Target DPTTarget  `json:"target"`
+	MX     []string   `json:"mx,omitempty"` // the name's MX hosts, when it has any
+	Ports  []SMTPPort `json:"ports"`
+	Login  *SMTPLogin `json:"login,omitempty"`
+	Send   *SMTPSend  `json:"send,omitempty"`
+	// what mail can and cannot do from here, port by port, and in a line
+	Possible    []SMTPCan `json:"possible"`
+	NotPossible []SMTPCan `json:"not_possible"`
+	Verdict     string    `json:"verdict"`
+	Started     time.Time `json:"started"`
 }
 
 // Failed: a port failed, the login or the test message failed, or no
@@ -214,6 +240,9 @@ func RunSMTP(ctx context.Context, target string, o SMTPOptions) (*SMTPReport, er
 	}
 	for i := range o.Ports {
 		<-done[i]
+	}
+	smtpIntercepts(rep, name, rep.MX)
+	for i := range o.Ports {
 		if o.OnPort != nil {
 			o.OnPort(&rep.Ports[i])
 		}
@@ -279,6 +308,7 @@ func RunSMTP(ctx context.Context, target string, o SMTPOptions) (*SMTPReport, er
 	if rep.Send != nil && o.OnSend != nil {
 		o.OnSend(rep.Send)
 	}
+	smtpVerdict(rep)
 	return rep, nil
 }
 
@@ -383,6 +413,9 @@ func acceptedRcpt(m *SMTPSend) bool {
 
 // SMTPUse is the smtp command's words.
 const SMTPUse = "smtp <host> [test <user> [<password>]] [from <address>] [to <address>]"
+
+// SMTPUseAlone answers dpt smtp with nothing after it.
+const SMTPUseAlone = "smtp: give the host, or smtp prompt to be asked a line at a time"
 
 // ParseSMTPWords reads what follows the host: [test <user>
 // [<password>]] [from <address>] [to <address>].  A from with no to is
@@ -494,7 +527,7 @@ func smtpReply(code int, msg string) string {
 	return strconv.Itoa(code) + " " + s
 }
 
-// smtpErr is a network error as shown.
+// smtpErr is a network error as shown, in plain words.
 func smtpErr(err error, timeout time.Duration) string {
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
@@ -503,7 +536,56 @@ func smtpErr(err error, timeout time.Duration) string {
 	if errors.Is(err, context.Canceled) {
 		return "interrupted"
 	}
+	e := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(e, "reset by peer") || strings.Contains(e, "forcibly closed"):
+		return "the connection was reset (a firewall, or the server refusing this machine's address)"
+	case errors.Is(err, io.EOF) || strings.Contains(e, "eof"):
+		return "the connection was closed (a firewall, or the server refusing this machine's address)"
+	}
 	return Safe(err.Error())
+}
+
+// smtpDialWhy is why a connection failed, in plain words, and whether it
+// was refused (nothing listening).
+func smtpDialWhy(err error, port int, timeout time.Duration) (string, bool) {
+	e := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(e, "refused"):
+		return "refused: nothing listening", true
+	case strings.Contains(e, "no route to host") || strings.Contains(e, "unreachable host") || strings.Contains(e, "host is unreachable"):
+		return "unreachable: a router or firewall on the way said no", false
+	case strings.Contains(e, "network is unreachable") || strings.Contains(e, "unreachable network"):
+		return "no route from this machine to it", false
+	}
+	s := smtpErr(err, timeout)
+	if strings.HasPrefix(s, "no answer") {
+		s = "timed out: a firewall is dropping it (" + s
+		if port == 25 {
+			s += "; many ISPs and clouds block outgoing 25"
+		}
+		s += ")"
+	}
+	return s, false
+}
+
+// smtpInspection is what shows a firewall rewriting SMTP (Cisco ASA's
+// inspection and the like): the greeting masked with *, extensions such
+// as STARTTLS turned into XXXXXXXA.  "" when nothing does.
+func smtpInspection(banner string, ext []string) string {
+	var why []string
+	_, text, _ := strings.Cut(banner, " ")
+	if t := strings.ReplaceAll(text, " ", ""); strings.Count(t, "*") >= 4 && 2*strings.Count(t, "*") >= len(t) {
+		why = append(why, "the greeting is masked with *")
+	}
+	for _, e := range ext {
+		w := strings.ToUpper(strings.TrimSpace(e))
+		if len(w) >= 4 && strings.Trim(w, "X") == "" || len(w) >= 5 && strings.Trim(w[:len(w)-1], "X") == "" {
+			why = append(why, "extensions are masked ("+e+")")
+			break
+		}
+	}
+	return strings.Join(why, ", ")
 }
 
 // smtpOpen connects to spec's port, reads the greeting, says EHLO and
@@ -523,19 +605,13 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 	d := net.Dialer{Timeout: o.Timeout}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(spec.Port)))
 	if err != nil {
-		if strings.Contains(err.Error(), "refused") {
-			p.Error, p.NoService, p.Status = "refused: nothing listens", true, DPTNone
+		why, refused := smtpDialWhy(err, spec.Port, o.Timeout)
+		if refused || spec.Alt && ctx.Err() == nil {
+			// nothing there; on a port only some use, no failure
+			p.Error, p.NoService, p.Status = why, refused, DPTNone
 			return nil
 		}
-		s := smtpErr(err, o.Timeout)
-		if strings.HasPrefix(s, "no answer") {
-			s = "no connection: " + s + " (a firewall drops it"
-			if spec.Port == 25 {
-				s += "; many ISPs and clouds block outgoing 25"
-			}
-			s += ")"
-		}
-		return fail(s)
+		return fail(why)
 	}
 	p.Connect = ms(time.Since(start))
 	c := &smtpConn{raw: raw, timeout: o.Timeout, stop: context.AfterFunc(ctx, func() { raw.Close() }), server: Safe(name)}
@@ -571,7 +647,11 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 	live("greeting")
 	code, msg, err := c.read()
 	if err != nil {
-		return fail("greeting: " + smtpErr(err, o.Timeout))
+		why := smtpErr(err, o.Timeout)
+		if strings.HasPrefix(why, "no answer") {
+			why = "connected, but " + why + ": something holds the port without speaking SMTP (a firewall or proxy), or the server is stalling"
+		}
+		return fail("greeting: " + why)
 	}
 	first, _, _ := strings.Cut(msg, "\n")
 	p.Banner = smtpReply(code, first)
@@ -616,6 +696,7 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 	if err := ehlo(); err != nil {
 		return fail("EHLO: " + err.Error())
 	}
+	p.Inspected = smtpInspection(p.Banner, p.Extensions)
 	if !spec.Implicit {
 		p.authClear = slices.Clone(p.Auth)
 		if clear {
@@ -626,6 +707,9 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 		if !p.StartTLS {
 			p.AuthPlain = len(p.Auth) > 0
 			p.Status, p.Note = DPTWarn, "no STARTTLS: everything goes in the clear"
+			if p.Inspected != "" {
+				p.Note = "no STARTTLS: a firewall inspecting SMTP took it out (" + p.Inspected + "); the server itself may offer it"
+			}
 			return c
 		}
 		live("STARTTLS")
@@ -647,6 +731,8 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 	}
 	p.Status = DPTOK
 	switch t := p.TLS; {
+	case p.Inspected != "":
+		p.Status, p.Note = DPTWarn, "a firewall is inspecting SMTP here ("+p.Inspected+")"
 	case !t.Trusted:
 		p.Status, p.Note = DPTWarn, "certificate not trusted"
 	case t.Version == "TLS 1.0" || t.Version == "TLS 1.1":

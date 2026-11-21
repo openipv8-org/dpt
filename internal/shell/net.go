@@ -24,25 +24,32 @@ func (s *Shell) serverName() string {
 }
 
 // smtp [host] [test <user> [<password>]] [from <address>] [to <address>];
-// with no host, the host set (else the current server).  smtp alone
-// asks, a line at a time, what to test.
+// with no host, the server.  smtp prompt asks, a line at a time, what to
+// test.
 func (s *Shell) smtp(args []string) {
 	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
 	host := s.hostName()
-	// smtp alone, or smtp prompt: the questions; blank is the host
-	if (len(args) == 0 || len(args) == 1 && strings.EqualFold(args[0], "prompt")) && s.lr != nil {
+	// smtp prompt: the questions
+	if len(args) == 1 && strings.EqualFold(args[0], "prompt") && s.lr != nil {
 		// offered: the last answers; for the server at first, the server
 		// when one was chosen (not the start's DNS server)
 		offer := ""
 		if s.targetSet {
 			offer = s.target
 		}
-		a, err := dpt.SMTPAsk(offer, s.lastSMTP, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
+		last := dpt.LoadSMTPAsked() // the last prompt's answers, kept in .dpt
+		if last == (dpt.SMTPAsked{}) {
+			last = s.lastSMTP
+		}
+		a, err := dpt.SMTPAsk(offer, last, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
 		if err != nil {
 			s.printf("*** %v\n", err)
 			return
 		}
-		s.lastSMTP = a // offered next time; the password in memory only
+		s.lastSMTP = a // offered next time
+		if err := dpt.SaveSMTPAsked(a); err != nil {
+			s.printf("*** the answers were not kept for next time: %v\n", err)
+		}
 		s.printf("  (the same as: %s)\n\n", a.Command())
 		s.runSMTP(a.Host, a.User, a.Password, a.From, a.To)
 		return
@@ -96,9 +103,6 @@ func (s *Shell) runSMTP(host, user, pass, from, to string) {
 	if err != nil {
 		s.printf("*** %v\n", err)
 		return
-	}
-	if r != nil && len(r.Target.Tested) > 0 {
-		s.setTargetTo(host, r.Target.Tested[0]) // it resolved: it is the server now
 	}
 	p.Summary(r)
 	s.printf("\n")
@@ -251,7 +255,6 @@ func (s *Shell) connect(args []string) {
 		s.printf("*** %v\n", err)
 		return
 	}
-	s.setTargetTo(host, r.Target.Tested[0]) // it resolved: it is the server now
 	dpt.RenderConnect(s.out, r, s.Color)
 	if conn == nil {
 		s.printf("\n")

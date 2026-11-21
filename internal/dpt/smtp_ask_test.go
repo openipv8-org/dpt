@@ -4,6 +4,9 @@ package dpt
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -110,5 +113,33 @@ func TestSMTPAsk(t *testing.T) {
 	ask, secret, _ = scripted("smtp.example.com")
 	if _, err := SMTPAsk("", SMTPAsked{}, ask, secret, say); err != ErrSMTPAskStopped {
 		t.Errorf("stopped: %v", err)
+	}
+}
+
+// the smtp prompt's answers kept in .dpt, private, the file's other lines
+// left as they were
+func TestSMTPAskedSaved(t *testing.T) {
+	dir := t.TempDir()
+	old := SettingsFile
+	defer func() { SettingsFile = old }()
+	path := filepath.Join(dir, ".dpt")
+	SettingsFile = func() string { return path }
+	if a := LoadSMTPAsked(); a != (SMTPAsked{}) {
+		t.Fatalf("no file: %+v", a)
+	}
+	os.WriteFile(path, []byte("other=kept\nsmtp.host=old.example.com\n"), 0o644)
+	a := SMTPAsked{Host: "mail.example.com", User: "me@example.com", Password: "p=w ord", From: "me@example.com", To: "you@example.org"}
+	if err := SaveSMTPAsked(a); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSMTPAsked(); got != a {
+		t.Errorf("got %+v, want %+v", got, a)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "other=kept\n") || strings.Contains(string(b), "old.example.com") {
+		t.Errorf("file:\n%s", b)
+	}
+	if st, err := os.Stat(path); err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Errorf("mode: %v %v", st.Mode(), err)
 	}
 }

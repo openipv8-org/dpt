@@ -12,7 +12,7 @@ DHCP servers are on the segment, and what do they hand out?
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
 dpt info                                            this machine's lease, DNS, NTP, clock
-dpt smtp <host> [test <user> [<pw>]] [to <addr>]    SMTP on 25, 465, 587, a login, a test message
+dpt smtp <host> [test <user> [<pw>]] [to <addr>]    SMTP on 25, 465, 587, 2525, 8025; what mail can do from here
 dpt sweep [ports] [<network>]                       live addresses (and their open ports)
 dpt ports <host> [<ports>]                          the common TCP and UDP ports of host, or a list
 dpt connect <host> <port> [tls|notls]               connect as telnet would, see what it says, type to it
@@ -87,16 +87,35 @@ to let dpt choose); trydhcp and info then use it. From a script
 
 ## SMTP, sweep, ports, connect, trace, outside-ip
 
-`dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start) and 587
-(STARTTLS) at once. For each one it shows the greeting, the TLS version,
-the certificate (checked against the name), and the AUTH methods offered.
-A port nothing listens on is NONE. A port that never answers is FAIL:
-many ISPs and clouds block outgoing 25. `test <user>` then logs in
+`dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start), 587
+(STARTTLS), and 2525 and 8025 (STARTTLS; providers like smtp2go offer them
+where 25 and 587 are blocked) at once. For each one it shows the
+greeting, the TLS version, the certificate (checked against the name),
+and the AUTH methods offered. A port that fails says why in plain words:
+`timed out: a firewall is dropping it` (many ISPs and clouds block
+outgoing 25), `refused: nothing listening`, `unreachable`, or connected
+with no greeting (something holds the port without speaking SMTP). A
+firewall inspecting SMTP (Cisco ASA and the like mask the greeting with
+`*` and turn STARTTLS into `XXXXXXXA`) is spotted and named, so a missing
+STARTTLS is not blamed on the server. A port whose greeting or
+certificate belongs to someone else than the server (an ISP or firewall
+answering in its place) is flagged. Nothing on 2525 or 8025 is NONE,
+not a failure. It ends with what mail can and cannot do from here:
+
+```
+FROM HERE possible      25    STARTTLS, trusted; login PLAIN LOGIN
+                        2525  STARTTLS, trusted; login PLAIN LOGIN
+          not possible  587   timed out: a firewall is dropping it (no answer in 10s)
+                        465   refused: nothing listening
+
+VERDICT   mail from here works on 25 or 2525 with STARTTLS
+```
+ `test <user>` then logs in
 (AUTH PLAIN or LOGIN) where the password is safest. A port with TLS and a
 trusted certificate is used first. Next comes TLS with an untrusted
 certificate. A plain connection is used only when that is all the server
 works with, including when its STARTTLS fails. Among equally safe ports
-the order is 587, 465, then 25. A login that is not over trusted TLS is
+the order is 587, 465, 2525, 8025, then 25. A login that is not over trusted TLS is
 WARN, and says who could have read the password. Leave the password out and dpt asks for it
 without echoing it. In the shell, it is never written to the history.
 
@@ -111,11 +130,15 @@ send for this sender. With `from` and `to` and no `test`, it is sent with
 no login, for a server that knows this machine by its address (smtp2go's
 IP authentication, an office relay) or one taking mail for its own
 addresses. It goes on the port that keeps it safest: TLS with a trusted
-certificate first, then 587, 465, 25.
+certificate first, then 587, 465, 2525, 8025, 25.
 
-`dpt smtp` or `dpt smtp prompt` (and the same in the shell) asks a line at a time: the
+`dpt smtp prompt` (and the same in the shell) asks a line at a time: the
 server, the username (Enter: no login), the password, who the test
-message is from (Enter: no message), and who it is to.
+message is from (Enter: no message), and who it is to. The answers are
+kept in `.dpt` in your home folder (`%APPDATA%\dpt\.dpt` on Windows),
+readable by you only, and offered next time: Enter takes what is
+offered, `-` takes none. The password is kept too, so keep the file
+private. `dpt smtp` with nothing after it shows how to use it.
 
 ```
 dpt smtp mail.smtp2go.com test jamie@example.com to someone@example.org
@@ -171,17 +194,20 @@ connect, with the days left.
 
 In the shell, `server <name>` sets the one server, as in nslookup, and the
 prompt shows it: `dpt [mail.smtp2go.com]>`. The commands act on it
-(`ping`, `ping 3`, `ports`, `connect 25`, `trace`, `smtp`), and giving one
-of them a host makes that the server. Lookups go to it first; when it has
-no DNS service, they go to the DNS server dpt started with, and say so:
-`*** this server, mail.smtp2go.com, has no DNS service: using 8.8.8.8`.
-`set dns=<server>` sends every lookup to that server instead (`set dns=`
-clears it); `info` shows the server, `dns=`, `ntpd=` and the interface.
+(`ping`, `ping 3`, `ports`, `connect 25`, `trace`, and `smtp`, which runs
+the whole mail check on it); a host given to one of them is for that
+command only. `root` makes a root server the server, as in nslookup.
+Lookups go to the server first; when it does not answer, they go to
+`fallback=` (8.8.8.8 at the start) and say so:
+`*** [mail.smtp2go.com] is not working: falling back to [8.8.8.8]`. When
+the fallback does not answer either, the lookup fails.
+`set fallback=<server>` changes it (`lserver <server>` is the same), and
+`set fallback clear` turns it off: lookups go to the server only. `info`
+and `set all` show the server, `fallback=`, `ntpd=` and the interface.
 `server clear` goes back to the DNS server dpt started with. With a
-server chosen, `sweep` pings the /24 around it. The `smtp` questions offer
-the last answers again (the password too, kept in memory only until dpt
-exits): blank takes what is offered, `-` takes none. Tab completes
-commands, `set` options, DNS types and interface names.
+server chosen, `sweep` pings the /24 around it. `smtp prompt` asks the
+mail questions. Tab completes commands, `set` options, DNS types and
+interface names.
 
 ## Install
 

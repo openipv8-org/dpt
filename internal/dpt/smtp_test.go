@@ -175,10 +175,10 @@ func TestSMTP(t *testing.T) {
 	s465 := &fakeSMTP{implicit: true, auth: "PLAIN LOGIN"}
 	s587 := &fakeSMTP{starttls: true, auth: "LOGIN PLAIN XOAUTH2"}
 	ports := []SMTPPortSpec{
-		{s25.serve(t, cert), false, "smtp"},
-		{s465.serve(t, cert), true, "submissions"},
-		{s587.serve(t, cert), false, "submission"},
-		{closedPort(t), false, "closed"},
+		{s25.serve(t, cert), false, "smtp", false},
+		{s465.serve(t, cert), true, "submissions", false},
+		{s587.serve(t, cert), false, "submission", false},
+		{closedPort(t), false, "closed", false},
 	}
 	smtpLoginOrder = []int{ports[2].Port, ports[1].Port, ports[0].Port}
 	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
@@ -212,7 +212,7 @@ func TestSMTP(t *testing.T) {
 	}
 	var b bytes.Buffer
 	RenderSMTP(&b, r, false, false)
-	for _, w := range []string{"PORT ", "submissions, TLS from the start", "STARTTLS", "certificate mail.test", "trusted", "AUTH PLAIN LOGIN", "LOGIN     u on", "235 2.7.0 Accepted", "refused: nothing listens", "LOGIN OK"} {
+	for _, w := range []string{"PORT ", "submissions, TLS from the start", "STARTTLS", "certificate mail.test", "trusted", "AUTH PLAIN LOGIN", "LOGIN     u on", "235 2.7.0 Accepted", "refused: nothing listening", "LOGIN OK"} {
 		if !strings.Contains(b.String(), w) {
 			t.Errorf("render lacks %q:\n%s", w, b.String())
 		}
@@ -246,7 +246,7 @@ func TestSMTPLoginAndPlain(t *testing.T) {
 	cert, pool := testCert(t)
 	login := &fakeSMTP{starttls: true, auth: "LOGIN"}
 	plain := &fakeSMTP{auth: "PLAIN LOGIN"} // no STARTTLS
-	ports := []SMTPPortSpec{{plain.serve(t, cert), false, "smtp"}, {login.serve(t, cert), false, "submission"}}
+	ports := []SMTPPortSpec{{plain.serve(t, cert), false, "smtp", false}, {login.serve(t, cert), false, "submission", false}}
 	smtpLoginOrder = []int{ports[1].Port, ports[0].Port}
 	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
 	r, err := RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool, User: "u", Password: "p", Timeout: 2 * time.Second})
@@ -276,7 +276,7 @@ func TestSMTPLoginAndPlain(t *testing.T) {
 	// STARTTLS offered but broken: the port FAILs, the login goes in the
 	// clear on it
 	broken := &fakeSMTP{starttls: true, brokenTLS: true, auth: "LOGIN"}
-	bp := []SMTPPortSpec{{broken.serve(t, cert), false, "submission"}}
+	bp := []SMTPPortSpec{{broken.serve(t, cert), false, "submission", false}}
 	smtpLoginOrder = []int{bp[0].Port}
 	r, _ = RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: bp, Roots: pool, User: "u", Password: "p", Timeout: 2 * time.Second})
 	if r.Ports[0].Status != DPTFail || !strings.Contains(r.Ports[0].Error, "STARTTLS handshake") {
@@ -287,7 +287,7 @@ func TestSMTPLoginAndPlain(t *testing.T) {
 	}
 	// no password AUTH anywhere: nothing sent
 	none := &fakeSMTP{starttls: true, auth: "XOAUTH2"}
-	np := []SMTPPortSpec{{none.serve(t, cert), false, "submission"}}
+	np := []SMTPPortSpec{{none.serve(t, cert), false, "submission", false}}
 	smtpLoginOrder = []int{np[0].Port}
 	r, _ = RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: np, Roots: pool, User: "u", Password: "p", Timeout: 2 * time.Second})
 	if l := r.Login; l.Status != DPTFail || !strings.Contains(l.Error, "offers only XOAUTH2") || none.authSeen.Load() {
@@ -298,7 +298,7 @@ func TestSMTPLoginAndPlain(t *testing.T) {
 func TestSMTPSend(t *testing.T) {
 	cert, pool := testCert(t)
 	sub := &fakeSMTP{starttls: true, auth: "PLAIN LOGIN"}
-	ports := []SMTPPortSpec{{closedPort(t), false, "smtp"}, {sub.serve(t, cert), false, "submission"}}
+	ports := []SMTPPortSpec{{closedPort(t), false, "smtp", false}, {sub.serve(t, cert), false, "submission", false}}
 	smtpLoginOrder = []int{ports[1].Port}
 	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
 	r, err := RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool, User: "u", Password: "p",
@@ -397,7 +397,7 @@ func TestSMTPSendNoLogin(t *testing.T) {
 	cert, pool := testCert(t)
 	plain := &fakeSMTP{}             // 25: no STARTTLS
 	sub := &fakeSMTP{starttls: true} // 587: STARTTLS, a trusted certificate, no AUTH (IP authentication)
-	ports := []SMTPPortSpec{{plain.serve(t, cert), false, "smtp"}, {sub.serve(t, cert), false, "submission"}}
+	ports := []SMTPPortSpec{{plain.serve(t, cert), false, "smtp", false}, {sub.serve(t, cert), false, "submission", false}}
 	smtpLoginOrder = []int{ports[1].Port, ports[0].Port}
 	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
 	r, err := RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool,

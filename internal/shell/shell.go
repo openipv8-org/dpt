@@ -46,19 +46,18 @@ type Shell struct {
 	ntpd     string
 	// target is the server: the one host the commands act on (ping,
 	// ports, smtp, trace, connect...) and the DNS server lookups go to
-	// first; set by server, or by giving a command a host.  targetIP is
-	// its address; targetSet, that it was chosen (not the start's DNS
-	// server).
+	// first; set by server (or root).  targetIP is its address;
+	// targetSet, that it was chosen (not the start's DNS server).  A host
+	// given to a command is for that command only.
 	target    string
 	targetIP  string
 	targetSet bool
-	// server is the DNS server lookups fall back to when the target has
-	// no DNS service (the system's, at start); with dnsSet (set dns=) it
-	// is the one lookups always use.
-	dnsSet bool
-	noDNS  map[string]bool // targets that did not answer DNS
-	// lastSMTP: the smtp questions' last answers, offered again (the
-	// password only in memory, for this session)
+	// server (srvName, as typed) is fallback=: where lookups go when the
+	// target does not answer DNS; 8.8.8.8 at the start, "" when set
+	// fallback clear turned it off.
+	noDNS map[string]bool // targets that did not answer DNS
+	// lastSMTP: the smtp questions' last answers, offered again (kept in
+	// .dpt too; this when that cannot be read)
 	lastSMTP dpt.SMTPAsked
 
 	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
@@ -84,14 +83,18 @@ func New(out io.Writer, servers []string, o dpt.DPTDHCPOptions) *Shell {
 	if o.Timeout > 0 {
 		s.timeout = o.Timeout
 	}
+	s.server = fallbackDNS // fallback=: lookups the server cannot answer
 	if len(servers) > 0 {
-		s.initial, s.server = servers[0], servers[0]
+		s.initial = servers[0]
 		s.target, s.targetIP = servers[0], servers[0]
 	}
 	s.noDNS = map[string]bool{}
 	s.sysDNS = servers
 	return s
 }
+
+// fallbackDNS is fallback= at the start.
+var fallbackDNS = "8.8.8.8"
 
 func (s *Shell) printf(f string, a ...any) { fmt.Fprintf(s.out, f, a...) }
 
@@ -101,10 +104,10 @@ func (s *Shell) Run(in *os.File) error {
 	lr.redact = withoutPassword
 	lr.complete = s.complete
 	s.lr = lr
-	if s.server == "" {
-		s.printf("*** no DNS server found: use server <address>\n")
+	if s.target == "" {
+		s.printf("*** no DNS server found: set one with server <address> (lookups go to fallback=%s)\n\n", fallbackDNS)
 	} else {
-		s.printf("Default server: %s\nAddress: %s\n\n", s.server, s.shown(s.server))
+		s.printf("Default server: %s\nAddress: %s\n\n", s.target, s.shown(s.targetIP))
 	}
 	for {
 		line, err := lr.ReadLine(s.prompt())
@@ -121,7 +124,7 @@ func (s *Shell) Run(in *os.File) error {
 	}
 }
 
-// prompt is dpt [<server>]>: dns=, ntpd= and the interface are in info
+// prompt is dpt [<server>]>: fallback=, ntpd= and the interface are in info
 // and set all, not in the way here.
 func (s *Shell) prompt() string {
 	if s.target == "" {
@@ -132,18 +135,6 @@ func (s *Shell) prompt() string {
 
 // settings writes the shell's settings, as info ends with them.
 func (s *Shell) settings() {
-	dns := s.serverName()
-	if s.srvName != "" {
-		dns += " (" + s.server + ")"
-	}
-	if dns == "" {
-		dns = "none"
-	}
-	if s.dnsSet {
-		dns += "   always (set dns= clears it)"
-	} else {
-		dns = "the server, else " + dns
-	}
 	or := func(v, none string) string {
 		if v == "" {
 			return none
@@ -154,7 +145,7 @@ func (s *Shell) settings() {
 	if s.targetIP != "" && s.targetIP != s.target {
 		s.printf("                               %s\n", s.targetIP)
 	}
-	s.printf("          dns=                 %s\n", dns)
+	s.printf("          fallback=            %s\n", s.fallbackWords())
 	s.printf("          ntpd=                %s\n", or(s.ntpd, "(the server)"))
 	s.printf("          interface            %s\n", or(s.iface, "(dpt chooses)"))
 }
@@ -182,20 +173,34 @@ func (s *Shell) Do(line string) bool {
 		return true
 	case cmd == "help" || cmd == "?":
 		s.help()
-	case cmd == "server" || cmd == "lserver":
+	case cmd == "server":
 		s.setTarget(args)
+	case cmd == "lserver":
+		// an alias of set fallback=
+		if len(args) != 1 {
+			s.printf("usage: lserver <server>   (the same as set fallback=<server>)\n")
+			break
+		}
+		s.setFallback(args[0])
 	case cmd == "root":
-		s.server, s.srvName, s.dnsSet = rootServer, "a.root-servers.net", true
-		s.printf("dns=a.root-servers.net (%s): lookups always go to it (set dns= clears it)\n\n", s.shown(rootServer))
+		// as nslookup's: a root server is the server
+		s.target, s.targetIP, s.targetSet = "a.root-servers.net", rootServer, true
+		delete(s.noDNS, rootServer)
+		s.printf("Default server: a.root-servers.net\nAddress: %s\n\n", s.shown(rootServer))
 	case cmd == "set":
 		if len(args) == 0 {
 			s.printf("usage: set <option>[=<value>]  (set all lists them)\n")
 			break
 		}
+		if len(args) == 2 && strings.EqualFold(args[0], "fallback") && strings.EqualFold(args[1], "clear") {
+			s.server, s.srvName = "", ""
+			s.printf("fallback cleared: lookups go to the server only\n")
+			break
+		}
 		for _, a := range args {
 			s.set(a)
 		}
-	case strings.HasPrefix(cmd, "ntpd="), strings.HasPrefix(cmd, "dns="):
+	case strings.HasPrefix(cmd, "ntpd="), strings.HasPrefix(cmd, "fallback="):
 		s.set(f[0])
 	case cmd == "ls":
 		s.ls(args)
@@ -241,7 +246,7 @@ func (s *Shell) Do(line string) bool {
 			s.printf("*** unknown command: %s (help lists them)\n", f[0])
 			break
 		}
-		server := "" // the server, else dns=
+		server := "" // the server, else fallback=
 		if len(f) == 2 {
 			a, err := s.resolve(f[1])
 			if err != nil {
@@ -258,14 +263,16 @@ func (s *Shell) Do(line string) bool {
 func (s *Shell) help() {
 	s.printf(`Commands (nslookup):
   server [<host> | clear] the one server: the commands below act on it, and lookups go to it
-                          first; with no DNS service there, they use dns= and say so. The
-                          prompt shows it: dpt [<host>]>. Giving a command a host sets it;
-                          clear goes back to the start's DNS server
-  set dns=<server>        lookups always go to this server (set dns= clears it); info shows it
-  <name>                  look up name with the server (else dns=) and the type
+                          first. The prompt shows it: dpt [<host>]>. A host given to a
+                          command is for that command only. clear: the start's DNS server
+  set fallback=<server>   where lookups go when the server does not answer DNS (8.8.8.8 at
+                          the start); dpt says so when it falls back. info shows it
+  lserver <server>        the same as set fallback=<server>
+  set fallback clear      no fallback: lookups go to the server only
+  <name>                  look up name with the server (else fallback=) and the type
   <address>               look up the name of an address (PTR)
   <name> <server>         look up name with another DNS server, once
-  root                    dns= a root server
+  root                    the server: a root server (a.root-servers.net)
   set type=<T> | q=<T>    A AAAA MX NS SOA TXT CNAME PTR SRV CAA DS DNSKEY ANY ...
   set class=<C>           IN, CH (version.bind), HS
   set port=<n>  set timeout=<s>  set retry=<n>
@@ -275,7 +282,7 @@ func (s *Shell) help() {
   ls [-d] <domain>        zone transfer (AXFR): -d every record, else A and NS
   exit
 dpt:
-  ping [host] [count]     ICMP echo (default the host, 5)
+  ping [host] [count]     ICMP echo (default the server, 5)
   time [host]             NTP time of host (default ntpd, else the server) against the references
   ntpd=<server>           the server time asks (set ntpd= clears it: the server)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
@@ -283,11 +290,14 @@ dpt:
   interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers
-  smtp, smtp prompt       asks, a line at a time: the server, a login, a test message
-  smtp [host]             SMTP on 25, 465, 587: greeting, STARTTLS or TLS, certificate, AUTH
+  smtp [host]             the mail check of the server (or host): 25, 465, 587, 2525, 8025, greeting,
+                          STARTTLS or TLS, certificate, AUTH, why a port fails, a firewall in the
+                          way; then what mail can and cannot do from here
+  smtp prompt             asks, a line at a time: the server, a login, a test message (offering the
+                          last answers, kept in .dpt)
   smtp [host] test <user> [password]
                           and log in: over trusted TLS when there is one, else untrusted TLS,
-                          else in the clear (WARN). No host: the last smtp host; no password:
+                          else in the clear (WARN). No host: the server; no password:
                           asked for, and never kept in the history
   smtp [host] [test <user> [password]] [from <address>] to <address>
                           and send a test message, "test from dpt at <this address>"
@@ -295,7 +305,7 @@ dpt:
   sweep [ports] [network] ping the /24 around the server (or network, or this machine's),
                           25 at a time; ports: then the common ports of each live one
   ports [host] [ports]    the common TCP ports and UDP services (DNS, NTP, QUIC...) of host
-                          (default the host), or ports: 587,2525,8000-8010,53/udp
+                          (default the server), or ports: 587,2525,8000-8010,53/udp
   connect [host] <port> [tls|notls]
                           connect as telnet would: the time, TLS and certificate, what the
                           server says first; then type to it (Ctrl-D or Ctrl-C to close)
@@ -306,40 +316,63 @@ dpt:
 `)
 }
 
-// setDNS is set dns=<server>: the DNS server lookups always use.
-func (s *Shell) setDNS(host string) {
+// setFallback is set fallback=<server> (and lserver): where lookups go
+// when the server does not answer DNS.
+func (s *Shell) setFallback(host string) {
 	a, err := s.resolve(host)
 	if err != nil {
-		s.printf("*** can't find address for dns=%s: %v\n", host, err)
+		s.printf("*** can't find address for fallback=%s: %v\n", host, err)
 		return
 	}
-	s.server, s.srvName, s.dnsSet = a, "", true
+	s.server, s.srvName = a, ""
 	if a != host {
 		s.srvName = host
 	}
-	s.printf("dns=%s (%s): lookups always go to it (set dns= clears it)\n", host, s.shown(a))
+	s.printf("fallback=%s (%s): lookups the server does not answer go to it\n", host, s.shown(a))
 }
 
-// dnsOrder is where lookups go: set dns= alone; else the server when it
-// has DNS, then the fallback.
+// fallbackWords is fallback= as info and set all show it.
+func (s *Shell) fallbackWords() string {
+	if s.server == "" {
+		return "off: lookups go to the server only (set fallback=<server> turns it on)"
+	}
+	if s.srvName != "" {
+		return s.srvName + " (" + s.server + ")"
+	}
+	return s.server
+}
+
+// dnsOrder is where lookups go: the server, then fallback= (when it is
+// on, and is not the server).
 func (s *Shell) dnsOrder() []string {
-	if s.dnsSet || s.targetIP == "" || s.targetIP == s.server || s.noDNS[s.targetIP] {
+	switch {
+	case s.targetIP == "" && s.server == "":
+		return nil
+	case s.targetIP == "":
 		return []string{s.server}
+	case s.server == "" || s.targetIP == s.server:
+		return []string{s.targetIP}
 	}
 	return []string{s.targetIP, s.server}
 }
 
-// noDNSWarn says the server did not answer DNS, once a lookup found it.
-func (s *Shell) noDNSWarn() {
-	s.printf("*** this server, %s, has no DNS service: using %s\n", s.target, s.serverName())
+// fallbackWarn says the server is not answering and the fallback is
+// asked instead.
+func (s *Shell) fallbackWarn() {
+	s.printf("*** [%s] is not working: falling back to [%s]\n", s.target, s.serverName())
 }
 
-// askAny asks the servers in dnsOrder: the server first, briefly, then
-// the fallback; it gives the answer and who gave it.
+// askAny asks the server, then (when it does not answer) fallback=,
+// saying so; when the fallback does not answer either, the lookup fails.
+// It gives the answer and who gave it.
 func (s *Shell) askAny(ctx context.Context, name string, t uint16) (*dpt.DNSAnswer, string, error) {
 	order := s.dnsOrder()
-	for i, srv := range order {
-		if i < len(order)-1 {
+	if len(order) == 0 {
+		return nil, "", errors.New("no server")
+	}
+	if len(order) == 2 {
+		srv := order[0]
+		if !s.noDNS[srv] {
 			// the server: one quick try; no DNS there is no reason to wait
 			o := dpt.DNSAskOptions{Type: t, Class: s.qclass, NoRecurse: !s.recurse, TCP: s.vc}
 			a, err := dpt.DNSAsk(ctx, s.addr(srv), name, o, min(s.timeout, 2*time.Second))
@@ -349,14 +382,13 @@ func (s *Shell) askAny(ctx context.Context, name string, t uint16) (*dpt.DNSAnsw
 			if ctx.Err() != nil {
 				return nil, srv, err
 			}
-			s.noDNS[srv] = true
-			s.noDNSWarn()
-			continue
+			s.noDNS[srv] = true // not asked again until the server is set again
 		}
-		a, err := s.ask(ctx, srv, name, t)
-		return a, srv, err
+		s.fallbackWarn()
+		order = order[1:]
 	}
-	return nil, "", errors.New("no DNS server")
+	a, err := s.ask(ctx, order[0], name, t)
+	return a, order[0], err
 }
 
 // resolve gives host's address: itself, or looked up as lookups are
@@ -468,19 +500,13 @@ func (s *Shell) set(a string) {
 		s.search = !strings.HasPrefix(k, "no")
 	case "defname", "def", "nodefname", "nodef":
 		s.defname = !strings.HasPrefix(k, "no")
-	case "dns":
-		// set dns=<server>: lookups always go there; set dns=: they go to
-		// the server again, else the start's DNS server
-		if !hasV {
-			s.printf("usage: set dns=<server>, or set dns= to clear it\n")
+	case "fallback":
+		// set fallback=<server>; set fallback clear is in Do
+		if v = strings.TrimSpace(v); !hasV || v == "" {
+			s.printf("usage: set fallback=<server>, or set fallback clear to turn it off\n")
 			return
 		}
-		if v = strings.TrimSpace(v); v == "" {
-			s.dnsSet, s.server, s.srvName = false, s.initial, ""
-			s.printf("dns= cleared: lookups go to the server, else %s\n", s.initial)
-			return
-		}
-		s.setDNS(v)
+		s.setFallback(v)
 	case "ntpd":
 		if !hasV {
 			bad()
@@ -496,10 +522,6 @@ func (s *Shell) set(a string) {
 }
 
 func (s *Shell) showAll() {
-	srv := s.server
-	if s.srvName != "" {
-		srv = s.srvName + " (" + s.server + ")"
-	}
 	no := func(on bool) string {
 		if on {
 			return "  "
@@ -510,12 +532,12 @@ func (s *Shell) showAll() {
 	if ntpd == "" {
 		ntpd = "(the server)"
 	}
-	host := s.target
-	if host == "" {
-		host = "(none)"
+	if s.target == "" {
+		s.printf("Default server: (none: server <name> sets it)\n")
+	} else {
+		s.printf("Default server: %s\nAddress: %s\n", s.target, s.shown(s.targetIP))
 	}
-	_ = srv
-	s.printf("server = %s\ndns = %s (%s)\n\nSet options:\n", host, srv, s.shown(s.server))
+	s.printf("fallback = %s\n\nSet options:\n", s.fallbackWords())
 	s.printf("  %svc\t\t%sdebug\t\t%sd2\n", no(s.vc), no(s.debug), no(s.d2))
 	s.printf("  %ssearch\t%srecurse\t%sdefname\n", no(s.search), no(s.recurse), no(s.defname))
 	s.printf("  timeout = %d\tretry = %d\tport = %d\n", int(s.timeout/time.Second), s.retry, s.port)
@@ -585,7 +607,7 @@ func (s *Shell) ask(ctx context.Context, server, name string, t uint16) (*dpt.DN
 // lookup is nslookup's plain lookup: on server, or ("") the server, else
 // the fallback.
 func (s *Shell) lookup(name, server string) {
-	if server == "" && s.server == "" && s.targetIP == "" {
+	if server == "" && len(s.dnsOrder()) == 0 {
 		s.printf("*** no server: use server <address>\n")
 		return
 	}
@@ -760,7 +782,12 @@ func (s *Shell) ls(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	srv := s.dnsOrder()[0]
+	order := s.dnsOrder()
+	if len(order) == 0 {
+		s.printf("*** no server: use server <address>\n")
+		return
+	}
+	srv := order[0]
 	rs, err := dpt.DNSZoneTransfer(ctx, s.addr(srv), fqdn(dom), s.timeout*5)
 	if err != nil && len(rs) == 0 {
 		s.printf("*** can't list domain %s: %v\n", dom, err)
@@ -778,8 +805,8 @@ func (s *Shell) ls(args []string) {
 	}
 }
 
-// host gives the server a command acts on, as typed, and its address:
-// the argument (which becomes the server), else the server.
+// host gives the host a command acts on, as typed, and its address: the
+// argument (for this command only), else the server.
 func (s *Shell) host(args []string, i int) (string, string, bool) {
 	if len(args) <= i {
 		if s.target == "" {
@@ -794,15 +821,7 @@ func (s *Shell) host(args []string, i int) (string, string, bool) {
 		s.printf("*** can't find %s: %v\n", name, err)
 		return "", "", false
 	}
-	s.setTargetTo(name, a)
 	return name, a, true
-}
-
-// setTargetTo makes name (at a) the server.
-func (s *Shell) setTargetTo(name, a string) {
-	if name != s.target {
-		s.target, s.targetIP, s.targetSet = name, a, true
-	}
 }
 
 // hostName is the server ("" none).
@@ -827,6 +846,7 @@ func (s *Shell) setTarget(args []string) {
 			return
 		}
 		s.target, s.targetIP, s.targetSet = args[0], a, true
+		delete(s.noDNS, a) // asked again
 		s.printf("Default server: %s\nAddress: %s\n\n", args[0], s.shown(a))
 	}
 }
@@ -834,7 +854,9 @@ func (s *Shell) setTarget(args []string) {
 func (s *Shell) opts() dpt.DPTOptions {
 	o := s.DPT.DPTOptions
 	o.Timeout = s.timeout
-	o.Resolver = dpt.NewResolver(s.dnsOrder()[len(s.dnsOrder())-1:]) // names: the DNS server that answers
+	if order := s.dnsOrder(); len(order) > 0 {
+		o.Resolver = dpt.NewResolver(order[len(order)-1:]) // names: the fallback, else the server
+	}
 	return o
 }
 

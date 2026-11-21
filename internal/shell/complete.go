@@ -10,7 +10,7 @@ import (
 
 // shellCommands are the commands Tab completes, as help lists them.
 var shellCommands = []string{
-	"server", "dns=", "root", "set", "ls", "exit", "quit", "help",
+	"server", "lserver", "fallback=", "root", "set", "ls", "exit", "quit", "help",
 	"ping", "time", "ntpd=", "trydhcp", "info", "interface", "dpt", "features",
 	"smtp", "sweep", "ports", "connect", "trace", "outside-ip",
 }
@@ -20,6 +20,7 @@ var setOptions = []string{
 	"all", "type=", "q=", "class=", "port=", "timeout=", "retry=",
 	"recurse", "norecurse", "vc", "novc", "debug", "nodebug", "d2", "nod2",
 	"domain=", "srchlist=", "search", "nosearch", "defname", "nodefname", "ntpd=",
+	"fallback=",
 }
 
 // complete gives the words that can stand where the cursor is: the
