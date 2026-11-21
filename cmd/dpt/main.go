@@ -163,9 +163,14 @@ func run(args []string) int {
 		return runNet(ctx, c, color, live)
 
 	case "info":
+		// the outside addresses: asked now, shown last, waited for no
+		// more than DPTOutsideWait from here
+		outside := dpt.StartOutside(ctx, c.Opts.Family, time.Now().Add(dpt.DPTOutsideWait))
 		r := dpt.DPTInfoGather(sysdns.Servers(), c.Opts.Iface)
 		l := live()
 		dpt.DPTInfoTime(ctx, r, c.Opts.NTP, c.Opts.Timeout, l)
+		l.Set("outside", "asking "+dpt.OutsideIPURL)
+		r.Outside = outside()
 		l.Stop()
 		if c.JSON {
 			dpt.DPTJSON(os.Stdout, r)

@@ -65,9 +65,13 @@ TIME      time.google.com            +0.2 ms  s1  delay   27.8 ms  .GOOG.
 FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ```
 
-`dpt info` reads what the machine already has, and sends only NTP time
+`dpt info` reads what the machine already has, and sends NTP time
 requests: to Google, Microsoft, AWS, Apple and NIST (and the machine's
-own time server), to show how far off this clock is. For
+own time server), to show how far off this clock is. It also asks
+ifconfig.me, over IPv4 and IPv6 at once, for the addresses the internet
+sees, and shows them last (`OUTSIDE  IPv4 ...  IPv6 ...`); it waits for
+them no more than 2.5 seconds from the start, and says why one did not
+come (`no IPv6 way out from this machine`, `no answer in 2.5 s`). For
 each interface: address, gateway, and the DHCP lease it holds (server,
 obtained, expires, the DNS and NTP servers in it); then the DNS and NTP
 servers the machine uses (resolv.conf; chrony, timesyncd or ntpd; macOS

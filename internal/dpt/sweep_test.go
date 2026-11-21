@@ -5,6 +5,7 @@ package dpt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -204,6 +205,52 @@ func TestSweepHostPortsRight(t *testing.T) {
 		{DPTOpenPort{Port: 443, Service: "quic", Proto: "udp"}, "web"}, {DPTOpenPort{Port: 3306, Service: "mysql"}, ""}} {
 		if k := PortKind(c.p); k != c.kind {
 			t.Errorf("%d: %q, want %q", c.p.Port, k, c.kind)
+		}
+	}
+}
+
+// info's outside addresses: both families asked at once, waited for no
+// longer than the deadline, and why one did not come
+func TestStartOutside(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		fmt.Fprint(w, "203.0.113.7")
+	}))
+	defer slow.Close()
+	old := OutsideIPURL
+	defer func() { OutsideIPURL = old }()
+	OutsideIPURL = slow.URL
+	start := time.Now()
+	wait := StartOutside(context.Background(), 4, start.Add(300*time.Millisecond))
+	o := wait()
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("waited %v", took)
+	}
+	if o.IPv4 != nil || !strings.HasPrefix(o.IPv4Why, "no answer") || o.IPv6 != nil || !strings.Contains(o.IPv6Why, "not asked") {
+		t.Errorf("%+v", o)
+	}
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "203.0.113.8\n") }))
+	defer fast.Close()
+	OutsideIPURL = fast.URL
+	o = StartOutside(context.Background(), 4, time.Now().Add(DPTOutsideWait))()
+	if o.IPv4 == nil || o.IPv4.Address != "203.0.113.8" {
+		t.Errorf("%+v", o)
+	}
+	var b strings.Builder
+	renderOutside(newOut(&b, false), o)
+	if !strings.Contains(b.String(), "OUTSIDE   IPv4   203.0.113.8") || !strings.Contains(b.String(), "IPv6   not asked") {
+		t.Errorf("render:\n%s", b.String())
+	}
+}
+
+func TestOutsideWhy(t *testing.T) {
+	for _, e := range []string{
+		`dial tcp6 [2600:1901::]:443: socket: address family not supported by protocol`,
+		`dial tcp6 [2600:1901::]:443: connect: network is unreachable`,
+		`dial tcp6 [2600:1901::]:443: connectex: An address incompatible with the requested protocol was used.`,
+	} {
+		if got := outsideWhy(errors.New(e), 6); got != "no IPv6 way out from this machine" {
+			t.Errorf("%s: %q", e, got)
 		}
 	}
 }

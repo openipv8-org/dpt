@@ -106,7 +106,8 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	}
 	fmt.Fprintf(&b, "DPT - Diagnostic Ports Time\n\n")
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
-	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers, clock (sends only NTP requests)\n", prog)
+	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers, clock, outside IPv4 and IPv6\n", prog)
+	fmt.Fprintf(&b, "                            (sends NTP requests, and asks %s for the outside addresses)\n", OutsideIPURL)
 	fmt.Fprintf(&b, "       %s smtp prompt      asks a line at a time: the server, username, password, from, to\n", prog)
 	fmt.Fprintf(&b, "                            (offering the last answers, kept in .dpt)\n")
 	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]] [from <address>] [to <address>]\n", prog)
