@@ -234,11 +234,21 @@ Windows: download the latest release,
 - [dpt-windows-amd64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-amd64.exe) for most PCs
 - [dpt-windows-arm64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-arm64.exe) for ARM (Snapdragon, Surface Pro X)
 
-then in PowerShell, in the folder it downloaded to:
+and run it (double-click it, or `.\dpt-windows-amd64.exe` in PowerShell).
 
-```
-.\dpt-windows-amd64.exe install
-```
+The download installs itself: run under its download name
+(`dpt-windows-amd64.exe`, `dpt-darwin-arm64`, `dpt-linux-amd64`, ...)
+with nothing after it, it does `dpt install`, asking for UAC or sudo,
+and then says to open a new terminal and type `dpt` (on Windows it waits
+for Enter, so a double-clicked window does not vanish). When the same or
+a newer dpt is already installed, it changes nothing and says so. With a
+command after it (`./dpt-linux-amd64 info`) it just runs the command, to
+try dpt without installing it.
+
+Until dpt is signed, Windows SmartScreen warns about it ("Windows
+protected your PC": More info, then Run anyway), and on a Mac a
+downloaded program must be allowed first (`chmod +x dpt-darwin-arm64`,
+then right-click it and Open); the curl line above avoids both.
 
 Once dpt is on a machine, it installs and updates itself:
 

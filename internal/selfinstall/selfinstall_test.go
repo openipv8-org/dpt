@@ -95,3 +95,24 @@ func TestInstallAndVersion(t *testing.T) {
 		t.Error("ParseVersionLine")
 	}
 }
+
+func TestIsDownloadName(t *testing.T) {
+	for n, want := range map[string]bool{
+		"dpt-windows-amd64.exe":                       true,
+		`C:\Users\me\Downloads\dpt-windows-arm64.exe`: true,
+		"/home/me/Downloads/dpt-linux-amd64":          true,
+		"./dpt-darwin-arm64":                          true,
+		"dpt-windows-amd64 (1).exe":                   true,
+		"DPT-Windows-AMD64.EXE":                       true,
+		"dpt":                                         false,
+		"dpt.exe":                                     false,
+		"/usr/local/bin/dpt":                          false,
+		"dpt-linux-386":                               false,
+		"dpt-freebsd-amd64":                           false,
+		".dpt-download-123":                           false,
+	} {
+		if got := IsDownloadName(n); got != want {
+			t.Errorf("%s: %v", n, got)
+		}
+	}
+}

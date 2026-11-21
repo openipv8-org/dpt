@@ -146,6 +146,22 @@ func parseV(s string) ([3]int, bool) {
 	return v, true
 }
 
+// IsDownloadName: path is a release file as downloaded,
+// dpt-<os>-<arch>[.exe], a browser's copy number allowed
+// (dpt-windows-amd64 (1).exe); the installed dpt is plain dpt.
+func IsDownloadName(path string) bool {
+	n := strings.ToLower(path[strings.LastIndexAny(path, `/\`)+1:])
+	n = strings.TrimSuffix(n, ".exe")
+	if i := strings.LastIndex(n, " ("); i > 0 && strings.HasSuffix(n, ")") {
+		if _, err := strconv.Atoi(n[i+2 : len(n)-1]); err == nil {
+			n = n[:i]
+		}
+	}
+	os, arch, ok := strings.Cut(strings.TrimPrefix(n, "dpt-"), "-")
+	return ok && strings.HasPrefix(n, "dpt-") &&
+		(os == "linux" || os == "darwin" || os == "windows") && (arch == "amd64" || arch == "arm64")
+}
+
 // AssetName is the release file for this system.
 func AssetName() string {
 	n := "dpt-" + runtime.GOOS + "-" + runtime.GOARCH

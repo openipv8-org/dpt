@@ -137,6 +137,11 @@ func run(args []string) int {
 
 	switch c.Mode {
 	case "shell":
+		// the download itself (dpt-windows-amd64.exe, dpt-darwin-arm64...)
+		// started with nothing after it: install it
+		if len(args) == 0 && !relayed && selfinstall.IsDownloadName(os.Args[0]) {
+			return autoInstall(ctx, color)
+		}
 		if err := firstErr(mel.Interface(true), mel.UDP()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
@@ -338,6 +343,31 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 		fmt.Printf("added %s to PATH: open a new window to use plain dpt\n", filepath.Dir(dest))
 	}
 	return exitOK
+}
+
+// autoInstall is the download started with no command: install it where
+// the system finds it, unless the same or a newer dpt is there; then say
+// how to use it (on Windows, where a double-click's window closes at
+// once, wait for Enter).
+func autoInstall(ctx context.Context, color bool) int {
+	code := func() int {
+		dest := selfinstall.Dest()
+		fmt.Printf("dpt %s: this is the download, so it installs itself (%s)\n", version, dest)
+		have, err := selfinstall.InstalledVersion(dest)
+		if err == nil && have != "" && !selfinstall.Newer(version, have) {
+			fmt.Printf("dpt %s is already installed at %s: nothing changed\n", have, dest)
+			return exitOK
+		}
+		return runInstall(ctx, "install", []string{"install"}, color)
+	}()
+	if code == exitOK {
+		fmt.Println("\nto use it: open a new terminal and type dpt")
+	}
+	if runtime.GOOS == "windows" && elevate.Interactive() {
+		fmt.Print("\npress Enter to close ")
+		bufio.NewReader(os.Stdin).ReadString('\n')
+	}
+	return code
 }
 
 // optName writes an option the way this system does.
