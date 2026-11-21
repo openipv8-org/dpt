@@ -38,11 +38,13 @@ type DPTCommand struct {
 	// sweep [ports] [<network>]
 	SweepPorts   bool
 	SweepNetwork string
-	Opts         DPTDHCPOptions
-	JSON         bool
-	NoColor      bool
-	Verbose      bool
-	Select       bool // choose the interface from a list
+	// ports <host> [<list>]: nil is DPTDefaultPorts
+	PortList []DPTPortName
+	Opts     DPTDHCPOptions
+	JSON     bool
+	NoColor  bool
+	Verbose  bool
+	Select   bool // choose the interface from a list
 }
 
 type dptOpt struct {
@@ -104,8 +106,10 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given)\n")
 	fmt.Fprintf(&b, "       %s sweep [ports] [<network>]\n", prog)
 	fmt.Fprintf(&b, "                            ping every address on this network (or <network>, 10.0.0.0/24; an address: its /24),\n")
-	fmt.Fprintf(&b, "                            25 at a time; ports: then the %d common TCP ports of each that answers\n", len(DPTTopPorts))
-	fmt.Fprintf(&b, "       %s ports <host>     the %d common TCP ports of host\n", prog, len(DPTTopPorts))
+	fmt.Fprintf(&b, "                            25 at a time; ports: then the common ports of each that answers\n")
+	fmt.Fprintf(&b, "       %s ports <host> [<ports>]\n", prog)
+	fmt.Fprintf(&b, "                            the %d common TCP ports and %d UDP services (DNS, NTP, QUIC, SNMP...) of host,\n", len(DPTTopPorts), len(DPTUDPPorts))
+	fmt.Fprintf(&b, "                            or <ports>: 587,2525,8000-8010,53/udp (TCP unless /udp)\n")
 	fmt.Fprintf(&b, "       %s outside-ip       the address the internet sees (asks %s)\n", prog, OutsideIPURL)
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
@@ -341,10 +345,17 @@ func (c *DPTCommand) words(pos []string) error {
 			return errors.New("sweep: a network or an interface, not both")
 		}
 	case "ports":
-		if len(rest) != 1 {
-			return errors.New("ports <host>")
+		if len(rest) < 1 || len(rest) > 2 {
+			return errors.New("ports <host> [<ports>]: 587,2525,8000-8010,53/udp")
 		}
 		c.Target = rest[0]
+		if len(rest) == 2 {
+			l, err := ParsePortList(rest[1])
+			if err != nil {
+				return err
+			}
+			c.PortList = l
+		}
 	default:
 		if len(rest) > 0 {
 			return extra()

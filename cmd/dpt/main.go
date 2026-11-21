@@ -428,7 +428,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		return out(r, func() { p.Summary(r) })
 
 	case "ports":
-		r, err := dpt.RunPorts(ctx, c.Target, c.Opts.Family, c.Opts.Timeout, nil, l)
+		r, err := dpt.RunPorts(ctx, c.Target, c.PortList, c.Opts.Family, c.Opts.Timeout, nil, l)
 		l.Stop()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "MEL:", err)

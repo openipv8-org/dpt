@@ -17,29 +17,37 @@ import (
 )
 
 // sweep: which addresses on the network this machine is on answer a
-// ping, 25 at a time; with ports, the 50 common TCP ports of each one
-// that does.  ports: those 50 ports of one address.  outside-ip: the
+// ping, 25 at a time; with ports, the common TCP and UDP ports of each
+// one that does.  ports: those ports (or a list given) of one address.  outside-ip: the
 // address the internet sees this machine as.
 
 // DPTPortName is a port and its usual service.
 type DPTPortName struct {
 	Port    int    `json:"port"`
 	Service string `json:"service"`
+	Proto   string `json:"proto"` // tcp or udp
 }
 
-// DPTTopPorts are the 50 TCP ports tried.
+// DPTTopPorts are the common TCP ports tried.
 var DPTTopPorts = []DPTPortName{
-	{21, "ftp"}, {22, "ssh"}, {23, "telnet"}, {25, "smtp"}, {53, "dns"},
-	{80, "http"}, {81, "http-alt"}, {88, "kerberos"}, {110, "pop3"}, {111, "rpcbind"},
-	{135, "msrpc"}, {139, "netbios"}, {143, "imap"}, {389, "ldap"}, {443, "https"},
-	{445, "smb"}, {465, "smtps"}, {514, "rsh"}, {515, "lpd"}, {548, "afp"},
-	{554, "rtsp"}, {587, "submission"}, {631, "ipp"}, {636, "ldaps"}, {873, "rsync"},
-	{993, "imaps"}, {995, "pop3s"}, {1080, "socks"}, {1433, "mssql"}, {1521, "oracle"},
-	{1723, "pptp"}, {1883, "mqtt"}, {2049, "nfs"}, {3000, "http-dev"}, {3306, "mysql"},
-	{3389, "rdp"}, {5000, "upnp"}, {5060, "sip"}, {5432, "postgres"}, {5900, "vnc"},
-	{5985, "winrm"}, {6379, "redis"}, {8000, "http-alt"}, {8080, "http-proxy"}, {8081, "http-alt"},
-	{8443, "https-alt"}, {8888, "http-alt"}, {9000, "http-alt"}, {9100, "jetdirect"}, {9200, "elasticsearch"},
+	{21, "ftp", "tcp"}, {22, "ssh", "tcp"}, {23, "telnet", "tcp"}, {25, "smtp", "tcp"}, {53, "dns", "tcp"},
+	{80, "http", "tcp"}, {81, "http-alt", "tcp"}, {88, "kerberos", "tcp"}, {110, "pop3", "tcp"}, {111, "rpcbind", "tcp"},
+	{135, "msrpc", "tcp"}, {139, "netbios", "tcp"}, {143, "imap", "tcp"}, {389, "ldap", "tcp"}, {443, "https", "tcp"},
+	{445, "smb", "tcp"}, {465, "smtps", "tcp"}, {514, "rsh", "tcp"}, {515, "lpd", "tcp"}, {548, "afp", "tcp"},
+	{554, "rtsp", "tcp"}, {587, "submission", "tcp"}, {631, "ipp", "tcp"}, {636, "ldaps", "tcp"}, {873, "rsync", "tcp"},
+	{993, "imaps", "tcp"}, {995, "pop3s", "tcp"}, {1080, "socks", "tcp"}, {1433, "mssql", "tcp"}, {1521, "oracle", "tcp"},
+	{1723, "pptp", "tcp"}, {1883, "mqtt", "tcp"}, {2049, "nfs", "tcp"}, {2525, "smtp-alt", "tcp"}, {3000, "http-dev", "tcp"}, {3306, "mysql", "tcp"},
+	{3389, "rdp", "tcp"}, {5000, "upnp", "tcp"}, {5060, "sip", "tcp"}, {5432, "postgres", "tcp"}, {5900, "vnc", "tcp"},
+	{5985, "winrm", "tcp"}, {6379, "redis", "tcp"}, {8000, "http-alt", "tcp"}, {8025, "smtp-alt", "tcp"}, {8080, "http-proxy", "tcp"}, {8081, "http-alt", "tcp"},
+	{8443, "https-alt", "tcp"}, {8888, "http-alt", "tcp"}, {9000, "http-alt", "tcp"}, {9100, "jetdirect", "tcp"}, {9200, "elasticsearch", "tcp"},
+	// HTTPS moved up by thousands: 1443, 2443 ... 14443 (8443 is above)
+	{1443, "https-alt", "tcp"}, {2443, "https-alt", "tcp"}, {3443, "https-alt", "tcp"}, {4443, "https-alt", "tcp"}, {5443, "https-alt", "tcp"}, {6443, "https-alt", "tcp"}, {7443, "https-alt", "tcp"},
+	{9443, "https-alt", "tcp"}, {10443, "https-alt", "tcp"}, {11443, "https-alt", "tcp"}, {12443, "https-alt", "tcp"}, {13443, "https-alt", "tcp"}, {14443, "https-alt", "tcp"},
 }
+
+// DPTDefaultPorts are what ports and sweep ports try: the common TCP
+// ports and the common UDP services.
+var DPTDefaultPorts = append(append([]DPTPortName{}, DPTTopPorts...), DPTUDPPorts...)
 
 // sweepMaxHosts is the most addresses a sweep tries: a larger network
 // is swept as the /24 this machine is in.
@@ -53,7 +61,7 @@ const connLimit = 100
 type SweepOptions struct {
 	Network *net.IPNet    // nil: the interface's IPv4 network
 	Iface   string        // "": the one dpt chooses
-	Ports   bool          // also try DPTTopPorts on each live address
+	Ports   bool          // also try DPTDefaultPorts on each live address
 	Batch   int           // addresses pinged at once; 0: 25
 	Timeout time.Duration // echo wait and connect; 0: 1 s
 	Live    *Live
@@ -82,11 +90,12 @@ type SweepHost struct {
 	ip       uint32
 }
 
-// DPTOpenPort is a port that took the connection.
+// DPTOpenPort is a port that took the connection (TCP) or answered (UDP).
 type DPTOpenPort struct {
 	Port    int    `json:"port"`
 	Service string `json:"service"`
-	Connect Ms     `json:"connect_ms"`
+	Proto   string `json:"proto"`
+	Connect Ms     `json:"connect_ms"` // UDP: the answer's time
 }
 
 // SweepReport is a sweep.
@@ -259,7 +268,7 @@ func RunSweep(ctx context.Context, o SweepOptions) (*SweepReport, error) {
 				h.Name = o.Names(ctx, h.Address)
 				if o.Ports && ctx.Err() == nil {
 					h.Scanned = true
-					h.Open, h.Closed, h.Filtered = ScanPorts(ctx, ip.String(), DPTTopPorts, o.Timeout, sem, nil)
+					h.Open, h.Closed, h.Filtered = ScanPorts(ctx, ip.String(), DPTDefaultPorts, o.Timeout, sem, nil)
 				}
 				found[i] = h
 			}()
@@ -294,19 +303,33 @@ func ScanPorts(ctx context.Context, ip string, ports []DPTPortName, timeout time
 				return
 			}
 			defer func() { <-sem }()
-			start := time.Now()
-			d := net.Dialer{Timeout: timeout}
-			c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(p.Port)))
-			mu.Lock()
-			defer mu.Unlock()
-			switch {
-			case err == nil:
-				c.Close()
-				open = append(open, DPTOpenPort{Port: p.Port, Service: p.Service, Connect: ms(time.Since(start))})
-			case strings.Contains(err.Error(), "refused"):
-				closed++
-			default:
-				filtered++
+			if p.Proto == "udp" {
+				st, rtt := probeUDP(ctx, ip, p.Port, timeout)
+				mu.Lock()
+				defer mu.Unlock()
+				switch st {
+				case udpOpen:
+					open = append(open, DPTOpenPort{Port: p.Port, Service: p.Service, Proto: "udp", Connect: ms(rtt)})
+				case udpClosed:
+					closed++
+				default:
+					filtered++
+				}
+			} else {
+				start := time.Now()
+				d := net.Dialer{Timeout: timeout}
+				c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(p.Port)))
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					c.Close()
+					open = append(open, DPTOpenPort{Port: p.Port, Service: p.Service, Proto: "tcp", Connect: ms(time.Since(start))})
+				case strings.Contains(err.Error(), "refused"):
+					closed++
+				default:
+					filtered++
+				}
 			}
 			done++
 			if progress != nil {
@@ -315,7 +338,12 @@ func ScanPorts(ctx context.Context, ip string, ports []DPTPortName, timeout time
 		}()
 	}
 	wg.Wait()
-	sort.Slice(open, func(i, j int) bool { return open[i].Port < open[j].Port })
+	sort.Slice(open, func(i, j int) bool {
+		if open[i].Port != open[j].Port {
+			return open[i].Port < open[j].Port
+		}
+		return open[i].Proto < open[j].Proto
+	})
 	return open, closed, filtered
 }
 
@@ -330,8 +358,12 @@ type PortsReport struct {
 	Elapsed  Ms            `json:"elapsed_ms"`
 }
 
-// RunPorts tries DPTTopPorts on target (the first address it resolves to).
-func RunPorts(ctx context.Context, target string, family int, timeout time.Duration, r *net.Resolver, live *Live) (*PortsReport, error) {
+// RunPorts tries ports (nil: DPTDefaultPorts) on target (the first
+// address it resolves to).
+func RunPorts(ctx context.Context, target string, ports []DPTPortName, family int, timeout time.Duration, r *net.Resolver, live *Live) (*PortsReport, error) {
+	if ports == nil {
+		ports = DPTDefaultPorts
+	}
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
@@ -342,15 +374,15 @@ func RunPorts(ctx context.Context, target string, family int, timeout time.Durat
 		return nil, err
 	}
 	ip := ips[0].String()
-	rep := &PortsReport{Target: DPTTarget{Input: target, Tested: []string{ip}}, Tried: len(DPTTopPorts)}
+	rep := &PortsReport{Target: DPTTarget{Input: target, Tested: []string{ip}}, Tried: len(ports)}
 	for _, a := range ips {
 		rep.Target.Addresses = append(rep.Target.Addresses, a.String())
 	}
 	start := time.Now()
 	defer live.Drop("ports")
-	live.Set("ports", fmt.Sprintf("ports of %s 0/%d", ip, len(DPTTopPorts)))
-	rep.Open, rep.Closed, rep.Filtered = ScanPorts(ctx, ip, DPTTopPorts, timeout, make(chan struct{}, connLimit), func(n int) {
-		live.Set("ports", fmt.Sprintf("ports of %s %d/%d", ip, n, len(DPTTopPorts)))
+	live.Set("ports", fmt.Sprintf("ports of %s 0/%d", ip, len(ports)))
+	rep.Open, rep.Closed, rep.Filtered = ScanPorts(ctx, ip, ports, timeout, make(chan struct{}, connLimit), func(n int) {
+		live.Set("ports", fmt.Sprintf("ports of %s %d/%d", ip, n, len(ports)))
 	})
 	rep.Elapsed = ms(time.Since(start))
 	if net.ParseIP(target) != nil {

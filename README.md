@@ -12,7 +12,7 @@ dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
 dpt info                                            this machine's lease, DNS, NTP, clock
 dpt smtp <host> [test <user> [<password>]]          SMTP on 25, 465, 587, and a login
 dpt sweep [ports] [<network>]                       live addresses (and their open ports)
-dpt ports <host>                                    the 50 common TCP ports of host
+dpt ports <host> [<ports>]                          the common TCP and UDP ports of host, or a list
 dpt outside-ip                                      the address the internet sees
 dpt install | upgrade                               install, or update to the newest
 dpt                                                 interactive shell (nslookup and more)
@@ -96,11 +96,22 @@ without echoing it. In the shell, it is never written to the history.
 
 `dpt sweep` pings every address on this machine's network, 25 at a time
 (two echoes each, 1 s wait), and lists the ones that answer with their
-names. `sweep ports` then tries the 50 common TCP ports of each live
-address. `sweep 10.0.0.0/24` sweeps that network (an address alone: its
-/24; at most /22). Addresses that drop pings (Windows' firewall does by
-default) are not listed. `dpt ports <host>` tries the 50 ports on one
-address. `dpt outside-ip` asks https://ifconfig.me/ip.
+names. `sweep ports` then tries the common ports of each live address.
+`sweep 10.0.0.0/24` sweeps that network (an address alone: its /24; at
+most /22). Addresses that drop pings (Windows' firewall does by default)
+are not listed. `dpt outside-ip` asks https://ifconfig.me/ip.
+
+`dpt ports <host>` tries 65 common TCP ports (including mail on 2525 and
+8025, and HTTPS on 1443, 2443 ... 14443) and 9 UDP services: DNS (53),
+TFTP (69), QUIC (80 and 443), NTP (123), NetBIOS (137), SNMP (161),
+SSDP (1900) and mDNS (5353). A UDP port is open only when it answers,
+so each is sent a real, harmless request of its own: a DNS query, an
+NTP time request, a QUIC packet of a version no one speaks (a QUIC
+server must answer with the versions it does), SNMPv3 discovery (no
+community string is guessed). Silence is "no answer": open and quiet,
+or dropped by a firewall. To try your own ports:
+`dpt ports mail.example.com 587,2525,8025`, ranges `8000-8010`, UDP with
+`/udp`: `53/udp,123/udp`.
 
 In the shell, these act on the current server when no host is given:
 `sweep` pings the /24 around it and `ports` tries its ports. Tab completes

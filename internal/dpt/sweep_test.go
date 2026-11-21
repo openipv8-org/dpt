@@ -16,7 +16,7 @@ import (
 )
 
 func TestTopPorts(t *testing.T) {
-	if len(DPTTopPorts) != 50 {
+	if len(DPTTopPorts) != 65 {
 		t.Errorf("%d ports", len(DPTTopPorts))
 	}
 	seen := map[int]bool{}
@@ -26,7 +26,7 @@ func TestTopPorts(t *testing.T) {
 		}
 		seen[p.Port] = true
 	}
-	for _, p := range []int{21, 22, 23, 25, 53, 80, 81, 443, 3389} {
+	for _, p := range []int{21, 22, 23, 25, 53, 80, 81, 443, 2525, 8025, 1443, 14443, 3389} {
 		if !seen[p] {
 			t.Errorf("%d missing", p)
 		}
@@ -106,14 +106,14 @@ func TestScanPorts(t *testing.T) {
 	}
 	defer l.Close()
 	open := l.Addr().(*net.TCPAddr).Port
-	ports := []DPTPortName{{open, "test"}, {closedPort(t), "closed"}}
+	ports := []DPTPortName{{open, "test", "tcp"}, {closedPort(t), "closed", "tcp"}}
 	o, closed, filtered := ScanPorts(context.Background(), "127.0.0.1", ports, time.Second, make(chan struct{}, 4), nil)
 	if len(o) != 1 || o[0].Port != open || closed != 1 || filtered != 0 {
 		t.Errorf("%v %d %d", o, closed, filtered)
 	}
 	var b bytes.Buffer
 	RenderPorts(&b, &PortsReport{Target: DPTTarget{Input: "h", Tested: []string{"127.0.0.1"}}, Open: o, Closed: 1, Tried: 2}, false)
-	if !strings.Contains(b.String(), fmt.Sprintf("OPEN      %-5d test", open)) || !strings.Contains(b.String(), "1 of 2 ports open, 1 closed, 0 no answer") {
+	if !strings.Contains(b.String(), fmt.Sprintf("OPEN      %-9s test", fmt.Sprint(open)+"/tcp")) || !strings.Contains(b.String(), "1 of 2 ports open, 1 closed, 0 no answer") {
 		t.Errorf("%s", b.String())
 	}
 }

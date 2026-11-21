@@ -131,10 +131,16 @@ func (s *Shell) sweep(args []string) {
 	s.printf("\n")
 }
 
-// ports [host]: the common TCP ports of host, or of the current server.
+// ports [host] [list]: the common ports of host, or of the current
+// server; or the ports in list (587,2525,8000-8010,53/udp).
 func (s *Shell) ports(args []string) {
+	var list []dpt.DPTPortName
+	if n := len(args); n > 0 && dpt.IsPortList(args[n-1]) {
+		list, _ = dpt.ParsePortList(args[n-1])
+		args = args[:n-1]
+	}
 	if len(args) > 1 {
-		s.printf("usage: ports [host]\n")
+		s.printf("usage: ports [host] [ports]   ports: 587,2525,8000-8010,53/udp\n")
 		return
 	}
 	name, ip, ok := s.host(args, 0)
@@ -147,7 +153,7 @@ func (s *Shell) ports(args []string) {
 	ctx, cancel := s.ctx()
 	defer cancel()
 	l := s.live()
-	r, err := dpt.RunPorts(ctx, ip, 0, s.DPT.Timeout, nil, l)
+	r, err := dpt.RunPorts(ctx, ip, list, 0, s.DPT.Timeout, nil, l)
 	l.Stop()
 	if err != nil {
 		s.printf("*** %v\n", err)

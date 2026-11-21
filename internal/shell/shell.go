@@ -239,8 +239,9 @@ dpt:
                           else in the clear (WARN). No host: the last smtp host; no password:
                           asked for, and never kept in the history
   sweep [ports] [network] ping the /24 around the server (or network, or this machine's),
-                          25 at a time; ports: then the 50 common TCP ports of each live one
-  ports [host]            the 50 common TCP ports of host (default the current server)
+                          25 at a time; ports: then the common ports of each live one
+  ports [host] [ports]    the common TCP ports and UDP services (DNS, NTP, QUIC...) of host
+                          (default the current server), or ports: 587,2525,8000-8010,53/udp
   outside-ip              the address the internet sees (asks ifconfig.me)
   Tab completes commands, options and names
   help, ?                 this list

@@ -48,7 +48,7 @@ func (p *SweepPrinter) Network(r *SweepReport) {
 	o.line("NETWORK", s)
 	what := "ping"
 	if r.Ports {
-		what = "ping, then the " + strconv.Itoa(len(DPTTopPorts)) + " common TCP ports of each live address"
+		what = fmt.Sprintf("ping, then the %d common TCP ports and %d UDP services of each live address", len(DPTTopPorts), len(DPTUDPPorts))
 	}
 	o.line("", o.dim(fmt.Sprintf("%d addresses, 25 at a time: %s", r.Tried, what)))
 	if r.Note != "" {
@@ -96,7 +96,7 @@ func portsLine(o dptOut, open []DPTOpenPort, closed, filtered int) string {
 	}
 	var b []string
 	for _, x := range open {
-		b = append(b, o.bold(strconv.Itoa(x.Port))+" "+x.Service)
+		b = append(b, o.bold(portProto(x.Port, x.Proto, false))+" "+x.Service)
 	}
 	return "open " + strings.Join(b, "  ")
 }
@@ -150,18 +150,26 @@ func RenderPorts(w io.Writer, r *PortsReport, color bool) {
 	}
 	o.line("TARGET", s)
 	if len(r.Open) == 0 {
-		o.line("OPEN", o.yellow("none of the "+strconv.Itoa(r.Tried)+" common ports"))
+		o.line("OPEN", o.yellow("none of the "+strconv.Itoa(r.Tried)+" ports tried"))
 	}
 	for i, x := range r.Open {
 		sec := ""
 		if i == 0 {
 			sec = "OPEN"
 		}
-		o.line(sec, fmt.Sprintf("%-5d %-15s %6s ms", x.Port, x.Service, fms(x.Connect)))
+		o.line(sec, fmt.Sprintf("%-9s %-15s %6s ms", portProto(x.Port, x.Proto, true), x.Service, fms(x.Connect)))
 	}
 	fmt.Fprintln(o.w, o.dim(DPTRule))
 	fmt.Fprintf(o.w, "%s of %d ports open, %d closed, %d no answer   (%s)\n",
 		o.bold(strconv.Itoa(len(r.Open))), r.Tried, r.Closed, r.Filtered, took(r.Elapsed))
+}
+
+// portProto is "25/tcp" (always: true) or "25", and "53/udp".
+func portProto(port int, proto string, always bool) string {
+	if proto == "udp" || always && proto != "" {
+		return strconv.Itoa(port) + "/" + proto
+	}
+	return strconv.Itoa(port)
 }
 
 // RenderOutsideIP writes outside-ip.
