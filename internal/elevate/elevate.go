@@ -4,7 +4,7 @@
 // person typed the command: sudo on Linux and macOS (the password is asked
 // in the same window), UAC on Windows (the elevated copy runs with no
 // window and its output comes back here).  From a script (input or output
-// not a terminal) nothing is asked: the caller prints the MEL line.
+// not a terminal) nothing is asked: the caller says what is needed.
 package elevate
 
 import (

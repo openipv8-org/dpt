@@ -896,7 +896,7 @@ func (s *Shell) ping(args []string) {
 	addr := net.ParseIP(ip)
 	c, err := dpt.OpenICMP(addr)
 	if err != nil {
-		s.printf("MEL: %v\n", err)
+		s.printf("*** %v\n", err)
 		return
 	}
 	defer c.Close()
@@ -1040,7 +1040,7 @@ func (s *Shell) trydhcp(args []string) {
 	r, err := dpt.RunDPTDHCP(ctx, o)
 	o.Live.Stop()
 	if err != nil {
-		s.printf("MEL: %v\n", err)
+		s.printf("*** %v\n", err)
 		return
 	}
 	p.Summary(r)

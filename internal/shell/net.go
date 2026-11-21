@@ -150,7 +150,7 @@ func (s *Shell) sweep(args []string) {
 	r, err := dpt.RunSweep(ctx, o)
 	l.Stop()
 	if err != nil {
-		s.printf("MEL: %v\n", err)
+		s.printf("*** %v\n", err)
 		return
 	}
 	p.Summary(r)

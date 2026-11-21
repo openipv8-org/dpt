@@ -91,7 +91,7 @@ func run(args []string) int {
 		}
 		list, def := dpt.DPTIfaceList()
 		if len(list) == 0 {
-			fmt.Fprintln(os.Stderr, "MEL: no Ethernet interface is up")
+			fmt.Fprintln(os.Stderr, "dpt: no Ethernet interface is up")
 			return exitMEL
 		}
 		dpt.RenderIfaceList(os.Stdout, list, def)
@@ -208,7 +208,7 @@ func run(args []string) int {
 		r, err := dpt.RunDPTDHCP(ctx, o)
 		o.Live.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		if c.JSON {
@@ -240,7 +240,7 @@ func run(args []string) int {
 	o.Live.Drop("resolve")
 	if err != nil {
 		o.Live.Stop()
-		fmt.Fprintln(os.Stderr, "MEL:", err)
+		fmt.Fprintln(os.Stderr, "dpt:", err)
 		return exitMEL
 	}
 	if c.Opts.Tests.Effective().Ping {
@@ -253,7 +253,7 @@ func run(args []string) int {
 	r, err := dpt.RunDPT(ctx, c.Target, o)
 	o.Live.Stop()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "MEL:", err)
+		fmt.Fprintln(os.Stderr, "dpt:", err)
 		return exitMEL
 	}
 	if c.JSON {
@@ -308,10 +308,10 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			if err == nil {
 				return code
 			}
-			fmt.Fprintf(os.Stderr, "MEL: %s needs %s (%v)\n", mode, dpt.DHCPNeeds, err)
+			fmt.Fprintf(os.Stderr, "dpt: %s needs %s (%v)\n", mode, dpt.DHCPNeeds, err)
 			return exitMEL
 		}
-		fmt.Fprintf(os.Stderr, "MEL: %s needs %s (to write %s)\n", mode, dpt.DHCPNeeds, filepath.Dir(dest))
+		fmt.Fprintf(os.Stderr, "dpt: %s needs %s (to write %s)\n", mode, dpt.DHCPNeeds, filepath.Dir(dest))
 		return exitMEL
 	}
 	switch mode {
@@ -458,7 +458,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		r, err := dpt.RunSMTP(ctx, c.Target, o)
 		l.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		out(r, func() { p.Summary(r) })
@@ -485,7 +485,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		r, err := dpt.RunSweep(ctx, o)
 		l.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		return out(r, func() { p.Summary(r) })
@@ -494,7 +494,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		r, err := dpt.RunPorts(ctx, c.Target, c.PortList, c.Opts.Family, c.Opts.Timeout, nil, l)
 		l.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		return out(r, func() { dpt.RenderPorts(os.Stdout, r, color) })
@@ -504,7 +504,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 			Timeout: c.Opts.Timeout, Family: c.Opts.Family, Live: l})
 		l.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		out(r, func() { dpt.RenderConnect(os.Stdout, r, color) })
@@ -551,7 +551,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		r, err := dpt.RunTrace(ctx, c.Target, dpt.TraceOptions{Family: c.Opts.Family, Live: l})
 		l.Stop()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "MEL:", err)
+			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitMEL
 		}
 		out(r, func() { dpt.RenderTrace(os.Stdout, r, color) })

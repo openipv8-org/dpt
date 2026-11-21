@@ -43,7 +43,7 @@ It needs sudo (Linux: or CAP_NET_RAW) or an Administrator prompt.
 Typed at a terminal, dpt asks for it itself: it runs sudo (the password
 is asked in the same window), or on Windows asks UAC and prints the
 elevated run's output in the same window. From a script it never asks:
-it says `MEL: dhcp needs sudo` and exits 2.
+it says `dpt: dhcp needs sudo` and exits 2.
 
 Options: `-c` / `/c:` count (5), `-w` / `/w:` timeout in seconds (2),
 `--names`, `--ntp`, `--all`, `--iface`, `--listen`, `--random-mac`,

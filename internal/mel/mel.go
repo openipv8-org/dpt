@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package mel checks dpt's Minimum Execution Level: what the chosen mode
-// needs before it runs.  A failure is one clear line and exit code 2.
+// needs before it runs.  A failure is one plain line, "dpt: dhcp needs
+// sudo", and exit code 2.
 package mel
 
 import (
@@ -11,13 +12,13 @@ import (
 	"openipv8.org/dpt/internal/dpt"
 )
 
-// Error is a MEL failure; its text follows "MEL: ".
+// Error is a MEL failure; its text follows "dpt: ".
 type Error struct {
 	Msg  string
 	Priv bool // more privilege would get past it
 }
 
-func (e *Error) Error() string { return "MEL: " + e.Msg }
+func (e *Error) Error() string { return "dpt: " + e.Msg }
 
 func fail(m string) error { return &Error{Msg: m} }
 
