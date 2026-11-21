@@ -110,8 +110,11 @@ func ParseVersionLine(s string) string {
 	return ""
 }
 
-// Newer: version a is a later release than b (v0.1.10 > v0.1.9).  Words
-// that are not vX.Y.Z (dev, a git describe) are older than any release.
+// Newer: version a is a later release than b (v0.1.10 > v0.1.9).  A test
+// pre-release comes before its release (v0.3.2-rc1 < v0.3.2) and after
+// the one before (v0.3.2-rc1 > v0.3.1); alpha before beta before rc.
+// Words that are not a version (dev, a git describe) are older than any
+// release.
 func Newer(a, b string) bool {
 	pa, oka := parseV(a)
 	pb, okb := parseV(b)
@@ -129,9 +132,25 @@ func Newer(a, b string) bool {
 	return false
 }
 
-func parseV(s string) ([3]int, bool) {
-	var v [3]int
+// parseV reads vX.Y.Z[-alphaN|-betaN|-rcN]: X, Y, Z and the pre-release's
+// place (a release after all of them).
+func parseV(s string) ([4]int, bool) {
+	var v [4]int
 	s = strings.TrimPrefix(s, "v")
+	s, pre, hasPre := strings.Cut(s, "-")
+	v[3] = 1 << 30 // a release: after its pre-releases
+	if hasPre {
+		ok := false
+		for i, w := range []string{"alpha", "beta", "rc"} {
+			if n, err := strconv.Atoi(strings.TrimPrefix(pre, w)); strings.HasPrefix(pre, w) && err == nil && n >= 0 {
+				v[3], ok = i*1000+n, true
+				break
+			}
+		}
+		if !ok {
+			return v, false
+		}
+	}
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
 		return v, false

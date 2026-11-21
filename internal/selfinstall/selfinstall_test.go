@@ -23,6 +23,16 @@ func TestNewer(t *testing.T) {
 		{"v0.1.8", "v0.1.7-3-gabc-dirty", true},
 		{"dev", "v0.1.8", false},
 		{"v0.1.8", "", true},
+		// test pre-releases: before their release, after the one before
+		{"v0.3.2-rc1", "v0.3.1", true},
+		{"v0.3.1", "v0.3.2-rc1", false},
+		{"v0.3.2", "v0.3.2-rc1", true},
+		{"v0.3.2-rc1", "v0.3.2", false},
+		{"v0.3.2-rc2", "v0.3.2-rc1", true},
+		{"v0.3.2-rc1", "v0.3.2-beta3", true},
+		{"v0.3.2-rc1", "v0.3.2-rc1", false},
+		{"v0.3.2-rc1-2-gabc", "v0.3.1", false}, // a git describe
+		{"v0.3.2-x1", "v0.3.1", false},
 	} {
 		if got := Newer(c.a, c.b); got != c.want {
 			t.Errorf("Newer(%q, %q) = %v", c.a, c.b, got)
