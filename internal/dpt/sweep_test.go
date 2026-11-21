@@ -168,3 +168,36 @@ func TestParseNetArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestSweepHostPortsRight(t *testing.T) {
+	var b bytes.Buffer
+	p := NewSweepPrinter(&b, false)
+	p.Network(&SweepReport{Network: "192.168.178.0/24", Tried: 254, Ports: true})
+	p.Host(&SweepHost{Address: "192.168.178.194", RTT: 5.2, TTL: 64, Scanned: true, Open: []DPTOpenPort{{Port: 22, Service: "ssh", Proto: "tcp"}}})
+	p.Host(&SweepHost{Address: "192.168.178.196", RTT: 5.8, TTL: 60, Scanned: true, Name: "nas.lan", Open: []DPTOpenPort{
+		{Port: 23, Service: "telnet", Proto: "tcp"}, {Port: 53, Service: "dns", Proto: "udp"}, {Port: 80, Service: "http", Proto: "tcp"},
+		{Port: 443, Service: "https", Proto: "tcp"}, {Port: 445, Service: "smb", Proto: "tcp"}, {Port: 5353, Service: "mdns", Proto: "udp"},
+		{Port: 8080, Service: "http-proxy", Proto: "tcp"}, {Port: 9100, Service: "jetdirect", Proto: "tcp"}}})
+	out := b.String()
+	if !strings.Contains(out, "LIVE      192.168.178.194     5.2 ms  ttl 64    22 ssh\n") {
+		t.Errorf("one port on the address's line:\n%s", out)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if len(l) > 80 {
+			t.Errorf("over 80: %q", l)
+		}
+	}
+	if !strings.Contains(out, "23 telnet  53/udp dns") || !strings.Contains(out, "   nas.lan\n") {
+		t.Errorf("ports, wrapped, then the name:\n%s", out)
+	}
+	for _, c := range []struct {
+		p    DPTOpenPort
+		kind string
+	}{{DPTOpenPort{Port: 23}, "risky"}, {DPTOpenPort{Port: 3389}, "remote"}, {DPTOpenPort{Port: 587}, "mail"},
+		{DPTOpenPort{Port: 53, Proto: "udp"}, "names"}, {DPTOpenPort{Port: 2443, Service: "https-alt"}, "web"},
+		{DPTOpenPort{Port: 443, Service: "quic", Proto: "udp"}, "web"}, {DPTOpenPort{Port: 3306, Service: "mysql"}, ""}} {
+		if k := PortKind(c.p); k != c.kind {
+			t.Errorf("%d: %q, want %q", c.p.Port, k, c.kind)
+		}
+	}
+}
