@@ -5,6 +5,7 @@ package selfinstall
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,25 @@ func TestIsDownloadName(t *testing.T) {
 		if got := IsDownloadName(n); got != want {
 			t.Errorf("%s: %v", n, got)
 		}
+	}
+}
+
+func TestManager(t *testing.T) {
+	for _, c := range []struct {
+		goos, exe, want string
+	}{
+		{"windows", `C:\Users\me\AppData\Local\Microsoft\WinGet\Packages\OpenIPv8.dpt_Microsoft.Winget.Source_8wekyb3d8bbwe\dpt-windows-amd64.exe`, "winget"},
+		{"windows", `C:\Users\me\AppData\Local\Microsoft\WinGet\Links\dpt.exe`, "winget"},
+		{"windows", `C:\Program Files\WinGet\Packages\OpenIPv8.dpt_Microsoft.Winget.Source_8wekyb3d8bbwe\dpt.exe`, "winget"},
+		{"windows", `C:\Program Files\dpt\dpt.exe`, ""},
+		{"windows", `C:\Users\me\Downloads\dpt-windows-amd64.exe`, ""},
+		{"linux", "/usr/local/bin/dpt", ""},
+	} {
+		if got := manager(c.goos, c.exe); got != c.want {
+			t.Errorf("%s %s: %q", c.goos, c.exe, got)
+		}
+	}
+	if u := ManagerUpgrade("winget"); strings.Join(u, " ") != "winget upgrade --id OpenIPv8.dpt --exact" {
+		t.Errorf("%v", u)
 	}
 }

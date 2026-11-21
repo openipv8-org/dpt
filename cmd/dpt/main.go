@@ -21,9 +21,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -139,7 +141,7 @@ func run(args []string) int {
 	case "shell":
 		// the download itself (dpt-windows-amd64.exe, dpt-darwin-arm64...)
 		// started with nothing after it: install it
-		if len(args) == 0 && !relayed && selfinstall.IsDownloadName(os.Args[0]) {
+		if len(args) == 0 && !relayed && selfinstall.IsDownloadName(os.Args[0]) && !installedByManager() {
 			return autoInstall(ctx, color)
 		}
 		if err := firstErr(mel.Interface(true), mel.UDP()); err != nil {
@@ -269,6 +271,28 @@ func run(args []string) int {
 
 // runInstall is dpt install and dpt upgrade.
 func runInstall(ctx context.Context, mode string, args []string, color bool) int {
+	// a package manager's dpt: upgrade runs the manager, install leaves it
+	if exe, err := os.Executable(); err == nil {
+		if m := selfinstall.Manager(exe); m != "" {
+			cmd := selfinstall.ManagerUpgrade(m)
+			if mode == "install" {
+				fmt.Printf("dpt %s is installed by %s (%s): %s keeps it up to date\n", version, m, exe, strings.Join(cmd, " "))
+				return exitOK
+			}
+			fmt.Printf("dpt %s was installed by %s: running %s\n", version, m, strings.Join(cmd, " "))
+			x := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+			x.Stdin, x.Stdout, x.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := x.Run(); err != nil {
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					return ee.ExitCode()
+				}
+				fmt.Fprintf(os.Stderr, "dpt: %s: %v\n", cmd[0], err)
+				return exitFail
+			}
+			return exitOK
+		}
+	}
 	dest := selfinstall.Dest()
 	// nothing to write: say so, and ask for no privilege
 	var latest, have, self string
@@ -343,6 +367,12 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 		fmt.Printf("added %s to PATH: open a new window to use plain dpt\n", filepath.Dir(dest))
 	}
 	return exitOK
+}
+
+// installedByManager: this dpt is a package manager's (winget's).
+func installedByManager() bool {
+	exe, err := os.Executable()
+	return err == nil && selfinstall.Manager(exe) != ""
 }
 
 // autoInstall is the download started with no command: install it where
