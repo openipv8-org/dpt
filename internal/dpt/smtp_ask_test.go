@@ -34,13 +34,23 @@ func TestSMTPAsk(t *testing.T) {
 	if err != nil || a != (SMTPAsked{"mail.smtp2go.com", "me@example.com", "pw", "me@example.com", "you@example.org"}) {
 		t.Fatalf("%+v %v", a, err)
 	}
-	want := []string{"mail server [mail.smtp2go.com]: ", "username (Enter: no login): ", "password for me@example.com: ",
-		"from [me@example.com]: ", "to (Enter: no message): ", "to (Enter: no message): "}
+	want := []string{
+		"hostname (blank uses [mail.smtp2go.com]) : ",
+		"username (blank is unauthenticated)      : ",
+		"password                                 : ",
+		"from (blank uses [me@example.com])       : ",
+		"to (blank sends no test message)         : ",
+		"to (blank sends no test message)         : ",
+	}
 	if strings.Join(*ps, "|") != strings.Join(want, "|") {
 		t.Errorf("prompts:\n%q", *ps)
 	}
 	if a.Command() != "smtp mail.smtp2go.com test me@example.com to you@example.org" || strings.Contains(a.Command(), "pw") {
 		t.Errorf("command %q", a.Command())
+	}
+
+	if said[0] != "Utility mail test" {
+		t.Errorf("first line %q", said[0])
 	}
 
 	// no username, no password: sent with no login (smtp2go knows this
@@ -67,7 +77,7 @@ func TestSMTPAsk(t *testing.T) {
 	// a user that is no address: from is asked with no default
 	ask, secret, ps = scripted("smtp.example.com", "jamie", "pw", "me@example.com", "you@example.org")
 	a, err = SMTPAsk("", ask, secret, say)
-	if err != nil || a.From != "me@example.com" || (*ps)[3] != "send a test message from (Enter: no message): " ||
+	if err != nil || a.From != "me@example.com" || (*ps)[3] != "from (blank sends no test message)  : " ||
 		!strings.Contains(a.Command(), " from me@example.com to ") {
 		t.Errorf("%+v %v %q", a, err, *ps)
 	}
