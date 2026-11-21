@@ -35,10 +35,10 @@ func TestSMTPAsk(t *testing.T) {
 		t.Fatalf("%+v %v", a, err)
 	}
 	want := []string{
-		"hostname (blank uses [mail.smtp2go.com]) : ",
+		"hostname (blank uses <mail.smtp2go.com>) : ",
 		"username (blank is unauthenticated)      : ",
 		"password                                 : ",
-		"from (blank uses [me@example.com])       : ",
+		"from (blank uses <me@example.com>)       : ",
 		"to (blank sends no test message)         : ",
 		"to (blank sends no test message)         : ",
 	}

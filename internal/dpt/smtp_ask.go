@@ -53,7 +53,7 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 	// the colons in one column: past the longest question
 	hostQ := "hostname"
 	if host != "" {
-		hostQ = "hostname (blank uses [" + host + "])"
+		hostQ = "hostname (blank uses <" + host + ">)"
 	}
 	w := max(len("username (blank is unauthenticated)"), len(hostQ))
 	pr := func(label string) string { return smtpPrompt(label, w) }
@@ -104,7 +104,7 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 	for {
 		p := pr("from (blank sends no test message)")
 		if MailAddr(a.User) {
-			p = pr("from (blank uses [" + a.User + "])")
+			p = pr("from (blank uses <" + a.User + ">)")
 		}
 		l, err := q(p)
 		if err != nil {
