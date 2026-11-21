@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// dpt — DNS Ping Time.  "Is this address working as a network peer", in
+// DPT — Diagnostic Ports Time.  "Is this address working as a network peer", in
 // one go: ping it, use it as a DNS resolver, ask it for the time and set
 // that against public NTP references; or (DHCP mode) see every DHCP
 // server on a segment and what it hands out, then test the DNS and NTP

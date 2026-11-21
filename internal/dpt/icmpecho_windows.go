@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 	"unsafe"
 
@@ -28,10 +29,27 @@ var (
 )
 
 const (
-	ipSuccess      = 0
-	ipReqTimedOut  = 11010
-	icmpReplyExtra = 64
+	ipSuccess       = 0
+	ipDestNetUnr    = 11002
+	ipDestHostUnr   = 11003
+	ipDestProtUnr   = 11004
+	ipDestPortUnr   = 11005
+	ipReqTimedOut   = 11010
+	ipTTLExpTransit = 11013
+	ipTTLExpReasm   = 11014
+	icmpReplyExtra  = 64
 )
+
+// icmpStatusKind: what a status from a router (not the address) says.
+func icmpStatusKind(st uint32) int {
+	switch st {
+	case ipTTLExpTransit, ipTTLExpReasm:
+		return icmpExceeded
+	case ipDestNetUnr, ipDestHostUnr, ipDestProtUnr, ipDestPortUnr:
+		return icmpUnreach
+	}
+	return icmpNotOurs
+}
 
 type icmpSys struct{ h uintptr }
 
@@ -82,7 +100,7 @@ type sockaddrIn6 struct {
 	ScopeID  uint32
 }
 
-func (c *ICMPConn) echo(seq int, timeout time.Duration) (EchoReply, error) {
+func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) {
 	// the API makes its own echo header; seq is ours only
 	data := append([]byte(nil), c.payload...)
 	binary.BigEndian.PutUint16(data[len(data)-2:], uint16(seq))
@@ -92,6 +110,9 @@ func (c *ICMPConn) echo(seq int, timeout time.Duration) (EchoReply, error) {
 	}
 	reply := make([]byte, int(unsafe.Sizeof(icmpEchoReply{}))+len(data)+8+icmpReplyExtra)
 	opts := ipOptionInformation{TTL: 128}
+	if ttl > 0 {
+		opts.TTL = uint8(min(ttl, 255))
+	}
 	start := time.Now()
 	var n uintptr
 	var callErr error
@@ -124,6 +145,14 @@ func (c *ICMPConn) echo(seq int, timeout time.Duration) (EchoReply, error) {
 		// ICMPV6_ECHO_REPLY: a packed 26-octet IPV6_ADDRESS_EX, then
 		// Status at 28
 		if st := binary.LittleEndian.Uint32(reply[28:]); st != ipSuccess {
+			if k := icmpStatusKind(st); k != icmpNotOurs && ttl > 0 {
+				// IPV6_ADDRESS_EX: port(2) flowinfo(4) address(16)
+				return EchoReply{Seq: seq, From: net.IP(append([]byte(nil), reply[6:22]...)).String(), RTT: rtt, TTL: -1,
+					Hop: k == icmpExceeded, Unreachable: k == icmpUnreach}, nil
+			}
+			if st == ipReqTimedOut {
+				return EchoReply{Seq: seq}, ErrEchoTimeout
+			}
 			return EchoReply{Seq: seq}, fmt.Errorf("echo status %d", st)
 		}
 		return EchoReply{Seq: seq, From: c.ip.String(), RTT: rtt, TTL: -1, Size: 8 + len(data)}, nil
@@ -133,6 +162,12 @@ func (c *ICMPConn) echo(seq int, timeout time.Duration) (EchoReply, error) {
 		return EchoReply{Seq: seq}, ErrEchoTimeout
 	}
 	if r.Status != ipSuccess {
+		if k := icmpStatusKind(r.Status); k != icmpNotOurs && ttl > 0 {
+			a := r.Address // in network order as stored
+			from := net.IPv4(byte(a), byte(a>>8), byte(a>>16), byte(a>>24)).String()
+			return EchoReply{Seq: seq, From: from, RTT: rtt, TTL: int(r.Options.TTL),
+				Hop: k == icmpExceeded, Unreachable: k == icmpUnreach}, nil
+		}
 		return EchoReply{Seq: seq}, fmt.Errorf("echo status %d", r.Status)
 	}
 	return EchoReply{Seq: seq, From: c.ip.String(), RTT: rtt, TTL: int(r.Options.TTL), Size: 8 + int(r.DataSize)}, nil

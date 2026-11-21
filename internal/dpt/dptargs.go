@@ -30,7 +30,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "shell", "help", "version"
+	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "shell", "help", "version"
 	Target string // dpt, smtp, ports: the address or name
 	// smtp <host> test <user> [<password>]: log in as User (Password ""
 	// is asked for)
@@ -42,11 +42,14 @@ type DPTCommand struct {
 	SweepNetwork string
 	// ports <host> [<list>]: nil is DPTDefaultPorts
 	PortList []DPTPortName
-	Opts     DPTDHCPOptions
-	JSON     bool
-	NoColor  bool
-	Verbose  bool
-	Select   bool // choose the interface from a list
+	// connect <host> <port> [tls|notls]
+	ConnectPort       int
+	ConnectTLS, NoTLS bool
+	Opts              DPTDHCPOptions
+	JSON              bool
+	NoColor           bool
+	Verbose           bool
+	Select            bool // choose the interface from a list
 }
 
 type dptOpt struct {
@@ -101,6 +104,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	if st == DPTStyleWindows {
 		tests = "/tdp"
 	}
+	fmt.Fprintf(&b, "DPT - Diagnostic Ports Time\n\n")
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
 	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers, clock (sends only NTP requests)\n", prog)
 	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]] [from <address>] [to <address>]\n", prog)
@@ -114,6 +118,10 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "       %s ports <host> [<ports>]\n", prog)
 	fmt.Fprintf(&b, "                            the %d common TCP ports and %d UDP services (DNS, NTP, QUIC, SNMP...) of host,\n", len(DPTTopPorts), len(DPTUDPPorts))
 	fmt.Fprintf(&b, "                            or <ports>: 587,2525,8000-8010,53/udp (TCP unless /udp)\n")
+	fmt.Fprintf(&b, "       %s connect <host> <port> [tls|notls]\n", prog)
+	fmt.Fprintf(&b, "                            connect as telnet would: the time, TLS and certificate (443, 465, 993...: TLS\n")
+	fmt.Fprintf(&b, "                            unless notls), what the server says first; then, at a terminal, type to it\n")
+	fmt.Fprintf(&b, "       %s trace <host>     the routers on the way, each hop asked 3 times, with times and loss\n", prog)
 	fmt.Fprintf(&b, "       %s outside-ip       the address the internet sees (asks %s)\n", prog, OutsideIPURL)
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
@@ -278,7 +286,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
 		}
-	case "smtp", "sweep", "ports", "outside-ip":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New(c.Mode + " takes no test letters")
 		}
@@ -295,9 +303,9 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 }
 
 // dptModes are the words that choose a mode instead of naming a target.
-var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip"}
+var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace"}
 
-const dptModeList = "dhcp, info, smtp, sweep, ports, outside-ip, install, upgrade"
+const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, install, upgrade"
 
 // words reads the words that are not options: a mode and its arguments,
 // or the target.
@@ -343,6 +351,32 @@ func (c *DPTCommand) words(pos []string) error {
 		if c.SweepNetwork != "" && c.Opts.Iface != "" {
 			return errors.New("sweep: a network or an interface, not both")
 		}
+	case "connect":
+		const use = "connect <host> <port> [tls|notls]"
+		if len(rest) < 2 || len(rest) > 3 {
+			return errors.New(use)
+		}
+		c.Target = rest[0]
+		n, err := strconv.Atoi(rest[1])
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("connect: port %q: a number from 1 to 65535", Printable(rest[1]))
+		}
+		c.ConnectPort = n
+		if len(rest) == 3 {
+			switch strings.ToLower(rest[2]) {
+			case "tls":
+				c.ConnectTLS = true
+			case "notls":
+				c.NoTLS = true
+			default:
+				return errors.New(use)
+			}
+		}
+	case "trace":
+		if len(rest) != 1 {
+			return errors.New("trace <host>")
+		}
+		c.Target = rest[0]
 	case "ports":
 		if len(rest) < 1 || len(rest) > 2 {
 			return errors.New("ports <host> [<ports>]: 587,2525,8000-8010,53/udp")

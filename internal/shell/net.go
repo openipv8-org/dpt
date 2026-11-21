@@ -3,7 +3,9 @@
 package shell
 
 import (
+	"context"
 	"net"
+	"strconv"
 	"strings"
 
 	"openipv8.org/dpt/internal/dpt"
@@ -213,4 +215,85 @@ func withoutPassword(line string) (string, bool) {
 		}
 	}
 	return line, false
+}
+
+// connect [host] <port> [tls|notls]: with no host, the current server.
+func (s *Shell) connect(args []string) {
+	const use = "usage: connect [host] <port> [tls|notls]\n"
+	o := dpt.ConnectOptions{Timeout: s.DPT.Timeout, Family: s.DPT.Family, Resolver: s.opts().Resolver}
+	if n := len(args); n > 0 {
+		switch strings.ToLower(args[n-1]) {
+		case "tls":
+			o.TLS, args = true, args[:n-1]
+		case "notls":
+			o.NoTLS, args = true, args[:n-1]
+		}
+	}
+	host := s.serverName()
+	switch len(args) {
+	case 1:
+	case 2:
+		host, args = args[0], args[1:]
+	default:
+		s.printf(use)
+		return
+	}
+	port, err := strconv.Atoi(args[0])
+	if err != nil || port < 1 || port > 65535 || host == "" {
+		s.printf(use)
+		return
+	}
+	o.Port = port
+	ctx, cancel := s.ctx()
+	defer cancel()
+	l := s.live()
+	o.Live = l
+	r, conn, err := dpt.RunConnect(ctx, host, o)
+	l.Stop()
+	if err != nil {
+		s.printf("*** %v\n", err)
+		return
+	}
+	dpt.RenderConnect(s.out, r, s.Color)
+	if conn == nil {
+		s.printf("\n")
+		return
+	}
+	defer conn.Close()
+	if r.Kind == "SSH" || s.lr == nil {
+		s.printf("\n")
+		return
+	}
+	s.printf("\nconnected: what you type goes to the server, a line at a time; Ctrl-D or Ctrl-C to close\n\n")
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	why := conn.Talk(func() (string, error) { return s.lr.Ask("") }, s.out, 0)
+	s.printf("\n%s\n\n", why)
+}
+
+// trace [host]: with no host, the current server.
+func (s *Shell) trace(args []string) {
+	if len(args) > 1 {
+		s.printf("usage: trace [host]\n")
+		return
+	}
+	name, ip, ok := s.host(args, 0)
+	if !ok {
+		return
+	}
+	if len(args) == 0 {
+		name = s.serverName()
+	}
+	ctx, cancel := s.ctx()
+	defer cancel()
+	l := s.live()
+	r, err := dpt.RunTrace(ctx, ip, dpt.TraceOptions{Family: s.DPT.Family, Timeout: 0, Live: l})
+	l.Stop()
+	if err != nil {
+		s.printf("*** %v\n", err)
+		return
+	}
+	r.Target.Input = name
+	dpt.RenderTrace(s.out, r, s.Color)
+	s.printf("\n")
 }

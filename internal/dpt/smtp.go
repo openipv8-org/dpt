@@ -619,10 +619,45 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 		p.Status, p.Note = DPTWarn, "certificate not trusted"
 	case t.Version == "TLS 1.0" || t.Version == "TLS 1.1":
 		p.Status, p.Note = DPTWarn, t.Version+" is obsolete"
-	case time.Until(t.NotAfter) < 14*24*time.Hour:
-		p.Status, p.Note = DPTWarn, "certificate expires in under 14 days"
+	case CertExpiring(t.NotAfter):
+		p.Status, p.Note = DPTWarn, "the certificate "+CertExpiryWords(t.NotAfter)
 	}
 	return c
+}
+
+// CertWarnDays: a certificate expiring sooner than this is WARN, time
+// enough to renew it before anyone is turned away.
+const CertWarnDays = 30
+
+// CertDaysLeft is the whole days until t (negative once past).
+func CertDaysLeft(t time.Time) int {
+	d := time.Until(t)
+	if d < 0 {
+		return -int((-d).Hours()/24) - 1
+	}
+	return int(d.Hours() / 24)
+}
+
+// CertExpiring: t is within CertWarnDays.
+func CertExpiring(t time.Time) bool {
+	return !t.IsZero() && time.Until(t) < CertWarnDays*24*time.Hour
+}
+
+// CertExpiryWords is "expires in 20 days (2026-12-10)", "expires today",
+// or "expired 3 days ago (...)".
+func CertExpiryWords(t time.Time) string {
+	n, day := CertDaysLeft(t), t.Format("2006-01-02")
+	switch {
+	case time.Until(t) < 0 && n == -1:
+		return "expired today (" + day + ")"
+	case n < 0:
+		return fmt.Sprintf("expired %d days ago (%s)", -n-1, day)
+	case n == 0:
+		return "expires today (" + day + ")"
+	case n == 1:
+		return "expires tomorrow (" + day + ")"
+	}
+	return fmt.Sprintf("expires in %d days (%s)", n, day)
 }
 
 // smtpMechs adds the AUTH mechanisms in s to have.

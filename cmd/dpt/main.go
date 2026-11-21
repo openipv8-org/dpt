@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 
-// dpt — DNS Ping Time: is this address working as a network peer?
+// DPT — Diagnostic Ports Time: is this address working as a network
+// peer, and what is on the way to it?
 //
 //	dpt <address|dnsname> [-tdp] [options]   time, DNS and ping tests of the address
 //	dpt dhcp [-td] [options]                 every DHCP server on the segment and its offer
 //	dpt smtp <host> [test <user> [<pw>]] [from <a>] [to <a>]   SMTP ports 25, 465, 587, a login, a test message
 //	dpt sweep [ports] [<network>]            live addresses (and their open ports)
-//	dpt ports <host>                         the common TCP ports of host
+//	dpt ports <host> [<ports>]               the common TCP and UDP ports of host
+//	dpt connect <host> <port> [tls|notls]    connect, see what it says, type to it
+//	dpt trace <host>                         the routers on the way
 //	dpt outside-ip                           the address the internet sees
 //	dpt                                      interactive shell: nslookup and more
 //
@@ -25,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 	"openipv8.org/dpt/internal/dpt"
@@ -151,7 +155,7 @@ func run(args []string) int {
 	case "install", "upgrade":
 		return runInstall(ctx, c.Mode, args, color)
 
-	case "smtp", "sweep", "ports", "outside-ip":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace":
 		if err := mel.Interface(true); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
@@ -363,7 +367,7 @@ func firstErr(errs ...error) error {
 	return nil
 }
 
-// runNet is smtp, sweep, ports and outside-ip.
+// runNet is smtp, sweep, ports, connect, trace and outside-ip.
 func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt.Live) int {
 	out := func(v any, text func()) int {
 		if c.JSON {
@@ -460,6 +464,67 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		return out(r, func() { dpt.RenderPorts(os.Stdout, r, color) })
 
+	case "connect":
+		r, conn, err := dpt.RunConnect(ctx, c.Target, dpt.ConnectOptions{Port: c.ConnectPort, TLS: c.ConnectTLS, NoTLS: c.NoTLS,
+			Timeout: c.Opts.Timeout, Family: c.Opts.Family, Live: l})
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "MEL:", err)
+			return exitMEL
+		}
+		out(r, func() { dpt.RenderConnect(os.Stdout, r, color) })
+		if conn == nil {
+			return exitFail
+		}
+		defer conn.Close()
+		// at a terminal: what is typed goes to the server; from a pipe:
+		// its lines do (printf 'GET / HTTP/1.0\n\n' | dpt connect host 80).
+		// Not SSH: there is nothing to say to it by hand.
+		tty := term.IsTerminal(int(os.Stdin.Fd()))
+		if c.JSON || r.Kind == "SSH" || !tty && !stdinHasData() {
+			return exitOK
+		}
+		linger := time.Duration(0)
+		if tty {
+			eof := "Ctrl-D"
+			if runtime.GOOS == "windows" {
+				eof = "Ctrl-Z then Enter"
+			}
+			fmt.Fprintf(os.Stderr, "\nconnected: what you type goes to the server, a line at a time; %s or Ctrl-C to close\n\n", eof)
+		} else {
+			linger = 5 * time.Second
+			fmt.Println()
+		}
+		in := bufio.NewReader(os.Stdin)
+		stop := context.AfterFunc(ctx, func() { conn.Close() }) // Ctrl-C closes it
+		defer stop()
+		why := conn.Talk(func() (string, error) {
+			l, err := in.ReadString('\n')
+			if err != nil {
+				return "", err
+			}
+			return strings.TrimRight(l, "\r\n"), nil
+		}, os.Stdout, linger)
+		fmt.Fprintf(os.Stderr, "\n%s\n", why)
+		return exitOK
+
+	case "trace":
+		if err := mel.ICMP(net.IPv4(127, 0, 0, 1)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitMEL
+		}
+		r, err := dpt.RunTrace(ctx, c.Target, dpt.TraceOptions{Family: c.Opts.Family, Live: l})
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "MEL:", err)
+			return exitMEL
+		}
+		out(r, func() { dpt.RenderTrace(os.Stdout, r, color) })
+		if r.Status == dpt.DPTFail {
+			return exitFail
+		}
+		return exitOK
+
 	default: // outside-ip
 		l.Set("outside", "asking "+dpt.OutsideIPURL)
 		r, err := dpt.RunOutsideIP(ctx, c.Opts.Family, c.Opts.Timeout)
@@ -470,6 +535,17 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		return out(r, func() { dpt.RenderOutsideIP(os.Stdout, r, color) })
 	}
+}
+
+// stdinHasData: stdin is a pipe or a file, not /dev/null or a console
+// left behind.
+func stdinHasData() bool {
+	st, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	m := st.Mode()
+	return m&os.ModeNamedPipe != 0 || m.IsRegular() && st.Size() > 0
 }
 
 // askSMTP asks at the terminal what smtp is to test.

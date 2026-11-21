@@ -23,6 +23,10 @@ type EchoReply struct {
 	RTT  time.Duration
 	TTL  int // -1: not known (Windows IPv6)
 	Size int // ICMP octets received
+	// Hop: From is a router on the way that said the echo's TTL ran
+	// out (trace), not the address echoed.  Unreachable: From said the
+	// address cannot be reached.
+	Hop, Unreachable bool
 }
 
 // ErrEchoTimeout is an echo that got no answer in time.
@@ -61,7 +65,59 @@ func (c *ICMPConn) Close() error { return c.close() }
 // Echo sends one echo request with sequence seq and waits up to timeout
 // for its reply.
 func (c *ICMPConn) Echo(seq int, timeout time.Duration) (EchoReply, error) {
-	return c.echo(seq, timeout)
+	return c.echo(seq, 0, timeout)
+}
+
+// EchoTTL sends an echo that may cross only ttl routers: the router
+// where it runs out answers (Hop), or the address does.
+func (c *ICMPConn) EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, error) {
+	return c.echo(seq, ttl, timeout)
+}
+
+// ICMP error kinds a trace hears.
+const (
+	icmpNotOurs = iota
+	icmpExceeded
+	icmpUnreach
+)
+
+// icmpTraceMatch reads b (ICMP, any IP header removed): time exceeded or
+// unreachable about our echo request seq.  The error carries the start
+// of the packet it is about: its IP header, then our echo's 8 octets.
+func icmpTraceMatch(v6 bool, b []byte, seq int) int {
+	if len(b) < 8 {
+		return icmpNotOurs
+	}
+	kind := icmpNotOurs
+	switch {
+	case !v6 && b[0] == 11, v6 && b[0] == 3:
+		kind = icmpExceeded
+	case !v6 && b[0] == 3, v6 && b[0] == 1:
+		kind = icmpUnreach
+	default:
+		return icmpNotOurs
+	}
+	in := b[8:]
+	req := byte(8)
+	if v6 {
+		if len(in) < 40+8 || in[0]>>4 != 6 || in[6] != 58 {
+			return icmpNotOurs
+		}
+		in, req = in[40:], 128
+	} else {
+		if len(in) < 20 || in[0]>>4 != 4 || in[9] != 1 {
+			return icmpNotOurs
+		}
+		hl := int(in[0]&0x0f) * 4
+		if hl < 20 || len(in) < hl+8 {
+			return icmpNotOurs
+		}
+		in = in[hl:]
+	}
+	if in[0] != req || int(binary.BigEndian.Uint16(in[6:])) != seq&0xffff {
+		return icmpNotOurs
+	}
+	return kind
 }
 
 // icmpEchoRequest is an echo request: type 8 (IPv4) or 128 (IPv6).  The

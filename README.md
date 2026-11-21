@@ -1,10 +1,12 @@
-# dpt — DNS Ping Time
+# DPT — Diagnostic Ports Time
 
-Is this address working as a network peer? One command answers it: ping
-it, use it as a DNS resolver, ask it for the time and compare that with
-public NTP servers, and check this machine's own clock against them (a
-drifting clock is what makes JWTs fail). Or look at every DHCP server on
-the segment and what it hands out.
+One tool for a network morning. Is this address working as a network
+peer: ping it, use it as a DNS resolver, ask it for the time and compare
+that with public NTP servers, and check this machine's own clock against
+them (a drifting clock is what makes JWTs fail). Which ports does it
+answer on, what does it say when you connect, and which routers are on
+the way? Does its mail server take a login and send a message? And what
+DHCP servers are on the segment, and what do they hand out?
 
 ```
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
@@ -13,6 +15,8 @@ dpt info                                            this machine's lease, DNS, N
 dpt smtp <host> [test <user> [<pw>]] [to <addr>]    SMTP on 25, 465, 587, a login, a test message
 dpt sweep [ports] [<network>]                       live addresses (and their open ports)
 dpt ports <host> [<ports>]                          the common TCP and UDP ports of host, or a list
+dpt connect <host> <port> [tls|notls]               connect as telnet would, see what it says, type to it
+dpt trace <host>                                    the routers on the way, with times and loss
 dpt outside-ip                                      the address the internet sees
 dpt install | upgrade                               install, or update to the newest
 dpt                                                 interactive shell (nslookup and more)
@@ -81,7 +85,7 @@ you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
 to let dpt choose); trydhcp and info then use it. From a script
 --select never asks: use `--iface`.
 
-## SMTP, sweep, ports, outside-ip
+## SMTP, sweep, ports, connect, trace, outside-ip
 
 `dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start) and 587
 (STARTTLS) at once. For each one it shows the greeting, the TLS version,
@@ -130,6 +134,33 @@ community string is guessed). Silence is "no answer": open and quiet,
 or dropped by a firewall. To try your own ports:
 `dpt ports mail.example.com 587,2525,8025`, ranges `8000-8010`, UDP with
 `/udp`: `53/udp,123/udp`.
+
+`dpt connect <host> <port>` is what telnet is used for. It connects,
+shows how long that took, the TLS and certificate (on 443, 465, 993,
+995, 8443 and the like it speaks TLS from the start; `tls` asks for it
+on any port, `notls` turns it off), and what the server says first:
+`SSH-2.0-OpenSSH_9.6`, a mail server's greeting, a switch's login
+prompt. It names what it sees: SSH, SMTP, FTP, POP3, IMAP, VNC, a telnet
+login (WARN: the password would go in the clear). Then, at a terminal,
+what you type goes to the server a line at a time and its answers are
+shown, until Ctrl-D (Windows: Ctrl-Z, Enter) or Ctrl-C. Lines can be
+piped in too: `printf 'GET / HTTP/1.0\r\n\r\n' | dpt connect example.com 80`.
+A telnet server's option negotiation is answered (every option refused,
+so it falls back to plain lines) and kept out of what is shown; so are
+escape sequences and other control characters from the server.
+
+`dpt trace <host>` shows the routers on the way, as traceroute and mtr
+do: each hop asked 3 times with an ICMP echo whose TTL runs out there,
+every hop at once, so a trace takes about 3 seconds however long the
+path. Each hop shows its address, name, the three times, and how many
+were lost. Loss at a hop in the middle that the hops after it do not
+show is a router too busy to answer, not loss; loss at the last hop is
+WARN. Some NATs (VirtualBox's) answer echoes on the address's behalf;
+then the address answers at hop 1 and dpt says the routers cannot be
+seen from here.
+
+A certificate that expires in under 30 days is WARN, in smtp and
+connect, with the days left.
 
 In the shell, these act on the current server when no host is given:
 `sweep` pings the /24 around it and `ports` tries its ports. Tab completes

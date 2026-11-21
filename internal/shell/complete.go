@@ -12,7 +12,7 @@ import (
 var shellCommands = []string{
 	"server", "lserver", "root", "set", "ls", "exit", "quit", "help",
 	"ping", "time", "ntpd=", "trydhcp", "info", "interface", "dpt", "features",
-	"smtp", "sweep", "ports", "outside-ip",
+	"smtp", "sweep", "ports", "connect", "trace", "outside-ip",
 }
 
 // setOptions are set's options.

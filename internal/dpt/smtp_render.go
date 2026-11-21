@@ -67,22 +67,8 @@ func (p *SMTPPrinter) Port(x *SMTPPort) {
 	if x.Banner != "" {
 		o.line("", x.Banner)
 	}
-	if t := x.TLS; t != nil {
-		o.line("", t.Version+"  "+t.Cipher)
-		c := "certificate " + t.Subject
-		if t.Issuer != "" {
-			c += "  issued by " + t.Issuer
-		}
-		if !t.NotAfter.IsZero() {
-			c += "  until " + t.NotAfter.Format("2006-01-02")
-		}
-		if t.Trusted {
-			c += "  trusted"
-			o.line("", c)
-		} else {
-			o.line("", c)
-			o.line("", o.yellow("not trusted: "+t.VerifyError))
-		}
+	if x.TLS != nil {
+		renderTLS(o, x.TLS)
 	}
 	switch {
 	case len(x.Auth) > 0 && x.AuthPlain:
@@ -178,4 +164,27 @@ func RenderSMTP(w io.Writer, r *SMTPReport, color, verbose bool) {
 		p.Send(r.Send)
 	}
 	p.Summary(r)
+}
+
+// renderTLS writes a connection's TLS and its certificate.
+func renderTLS(o dptOut, t *SMTPTLS) {
+	o.line("", t.Version+"  "+t.Cipher)
+	c := "certificate " + t.Subject
+	if t.Issuer != "" {
+		c += "  issued by " + t.Issuer
+	}
+	if !t.NotAfter.IsZero() {
+		u := "until " + t.NotAfter.Format("2006-01-02")
+		if CertExpiring(t.NotAfter) {
+			u = o.yellow(fmt.Sprintf("until %s (%d days)", t.NotAfter.Format("2006-01-02"), max(CertDaysLeft(t.NotAfter), 0)))
+		}
+		c += "  " + u
+	}
+	if t.Trusted {
+		c += "  trusted"
+		o.line("", c)
+	} else {
+		o.line("", c)
+		o.line("", o.yellow("not trusted: "+t.VerifyError))
+	}
 }

@@ -194,6 +194,10 @@ func (s *Shell) Do(line string) bool {
 		s.sweep(args)
 	case cmd == "ports":
 		s.ports(args)
+	case cmd == "connect":
+		s.connect(args)
+	case cmd == "trace":
+		s.trace(args)
 	case cmd == "outside-ip":
 		s.outsideIP()
 	default:
@@ -254,6 +258,10 @@ dpt:
                           25 at a time; ports: then the common ports of each live one
   ports [host] [ports]    the common TCP ports and UDP services (DNS, NTP, QUIC...) of host
                           (default the current server), or ports: 587,2525,8000-8010,53/udp
+  connect [host] <port> [tls|notls]
+                          connect as telnet would: the time, TLS and certificate, what the
+                          server says first; then type to it (Ctrl-D or Ctrl-C to close)
+  trace [host]            the routers on the way, each hop asked 3 times, with times and loss
   outside-ip              the address the internet sees (asks ifconfig.me)
   Tab completes commands, options and names
   help, ?                 this list

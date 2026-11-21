@@ -372,3 +372,23 @@ func TestParseSMTPWords(t *testing.T) {
 		t.Error("MailAddr")
 	}
 }
+
+func TestCertExpiry(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		at       time.Time
+		expiring bool
+		words    string
+	}{
+		{now.Add(90 * 24 * time.Hour), false, "expires in 89 days"},
+		{now.Add(20*24*time.Hour + time.Hour), true, "expires in 20 days"},
+		{now.Add(36 * time.Hour), true, "expires tomorrow"},
+		{now.Add(time.Hour), true, "expires today"},
+		{now.Add(-time.Hour), true, "expired today"},
+		{now.Add(-3*24*time.Hour - time.Hour), true, "expired 3 days ago"},
+	} {
+		if CertExpiring(c.at) != c.expiring || !strings.HasPrefix(CertExpiryWords(c.at), c.words) {
+			t.Errorf("%v: %v %q", time.Until(c.at), CertExpiring(c.at), CertExpiryWords(c.at))
+		}
+	}
+}
