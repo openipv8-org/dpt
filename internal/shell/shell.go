@@ -44,7 +44,10 @@ type Shell struct {
 	search   bool
 	defname  bool
 	ntpd     string
-	smtpHost string // the last smtp host: smtp test uses it
+	// target is the host the commands act on (ping, ports, smtp, trace,
+	// connect...): set by host, or by giving one of them a host; the
+	// server stays the DNS server.  "": the server.
+	target string
 
 	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
 	Color bool
@@ -115,6 +118,9 @@ func (s *Shell) prompt() string {
 	if s.iface != "" {
 		srv += " " + s.iface
 	}
+	if s.target != "" {
+		return "dpt host [" + s.target + "] server [" + srv + "]> "
+	}
 	return "dpt [" + srv + "]> "
 }
 
@@ -168,6 +174,8 @@ func (s *Shell) Do(line string) bool {
 		s.ls(args)
 	case cmd == "finger" || cmd == "view":
 		s.printf("%s: not supported\n", cmd)
+	case cmd == "host":
+		s.setHost(args)
 	case cmd == "ping":
 		s.ping(args)
 	case cmd == "time":
@@ -226,6 +234,10 @@ func (s *Shell) help() {
   <address>               look up the name of an address (PTR)
   <name> <server>         look up name with another server, once
   server <host>           set the default server (resolved with the current one)
+  host [<host> | clear]   set the host the commands below act on, show it, or clear it: the prompt
+                          shows dpt host [<host>] server [<server>]>; the server stays the
+                          DNS server. Giving any of them a host sets it too. No host set:
+                          they act on the server
   lserver <host>          set the default server (resolved with the first one)
   root                    set the default server to a root server
   set type=<T> | q=<T>    A AAAA MX NS SOA TXT CNAME PTR SRV CAA DS DNSKEY ANY ...
@@ -237,7 +249,7 @@ func (s *Shell) help() {
   ls [-d] <domain>        zone transfer (AXFR): -d every record, else A and NS
   exit
 dpt:
-  ping [host] [count]     ICMP echo (default the current server, 5)
+  ping [host] [count]     ICMP echo (default the host, 5)
   time [host]             NTP time of host (default ntpd, else the server) against the references
   ntpd=<server>           the server time asks (set ntpd= clears it)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
@@ -257,7 +269,7 @@ dpt:
   sweep [ports] [network] ping the /24 around the server (or network, or this machine's),
                           25 at a time; ports: then the common ports of each live one
   ports [host] [ports]    the common TCP ports and UDP services (DNS, NTP, QUIC...) of host
-                          (default the current server), or ports: 587,2525,8000-8010,53/udp
+                          (default the host), or ports: 587,2525,8000-8010,53/udp
   connect [host] <port> [tls|notls]
                           connect as telnet would: the time, TLS and certificate, what the
                           server says first; then type to it (Ctrl-D or Ctrl-C to close)
@@ -671,22 +683,58 @@ func (s *Shell) ls(args []string) {
 	}
 }
 
-// host gives the address a dpt command acts on: the argument (resolved
-// with the current server) or the current server itself.
+// host gives the host a command acts on, as typed, and its address: the
+// argument (which becomes the host), else the host set, else the
+// current server.
 func (s *Shell) host(args []string, i int) (string, string, bool) {
-	if len(args) <= i {
-		if s.server == "" {
-			s.printf("*** no server: give a host\n")
-			return "", "", false
-		}
-		return s.server, s.server, true
+	name := ""
+	switch {
+	case len(args) > i:
+		name = args[i]
+	case s.target != "":
+		name = s.target
+	case s.server == "":
+		s.printf("*** no host: give one, or set it with host <name>\n")
+		return "", "", false
+	default:
+		return s.serverName(), s.server, true
 	}
-	a, err := s.resolveHost(args[i], s.server)
+	a, err := s.resolveHost(name, s.server)
 	if err != nil {
-		s.printf("*** can't find %s: %v\n", args[i], err)
+		s.printf("*** can't find %s: %v\n", name, err)
 		return "", "", false
 	}
-	return args[i], a, true
+	s.target = name
+	return name, a, true
+}
+
+// hostName is the host the commands act on, as typed: the host set, else
+// the server.
+func (s *Shell) hostName() string {
+	if s.target != "" {
+		return s.target
+	}
+	return s.serverName()
+}
+
+// setHost is host [<name> | clear]: set the host the commands act on,
+// show it, or clear it (back to the server).
+func (s *Shell) setHost(args []string) {
+	switch {
+	case len(args) == 0 && s.target == "":
+		s.printf("no host set: the commands act on the server, %s\n", s.serverName())
+	case len(args) == 0:
+		s.printf("host %s   (server %s)\n", s.target, s.serverName())
+	case len(args) == 1 && strings.EqualFold(args[0], "clear"):
+		s.target = ""
+		s.printf("host cleared: the commands act on the server, %s\n", s.serverName())
+	case len(args) > 1:
+		s.printf("usage: host [<name or address> | clear]\n")
+	default:
+		if _, _, ok := s.host(args, 0); ok {
+			s.printf("host %s   (server %s stays the DNS server)\n", s.target, s.serverName())
+		}
+	}
 }
 
 func (s *Shell) opts() dpt.DPTOptions {
@@ -697,6 +745,12 @@ func (s *Shell) opts() dpt.DPTOptions {
 }
 
 func (s *Shell) ping(args []string) {
+	// ping <count> alone: the host (a number is no host's name)
+	if len(args) == 1 {
+		if _, err := strconv.Atoi(args[0]); err == nil {
+			args = []string{s.hostName(), args[0]}
+		}
+	}
 	name, ip, ok := s.host(args, 0)
 	if !ok {
 		return

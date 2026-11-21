@@ -313,3 +313,28 @@ func TestAddressColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestHostSetting(t *testing.T) {
+	s, out := newTestShell(t)
+	server := s.prompt()
+	s.Do("host")
+	if !strings.Contains(out.String(), "no host set") {
+		t.Errorf("%s", out)
+	}
+	s.Do("host 192.0.2.25")
+	if p := s.prompt(); !strings.HasPrefix(p, "dpt host [192.0.2.25] server [") || !strings.Contains(p, strings.TrimSuffix(strings.TrimPrefix(server, "dpt ["), "]> ")) {
+		t.Errorf("prompt %q (was %q)", p, server)
+	}
+	if s.hostName() != "192.0.2.25" {
+		t.Errorf("host %q", s.hostName())
+	}
+	// a command given a host sets it
+	s.Do("connect 127.0.0.1 1")
+	if s.target != "127.0.0.1" {
+		t.Errorf("after connect: %q", s.target)
+	}
+	s.Do("host clear")
+	if s.target != "" || s.prompt() != server || !strings.Contains(out.String(), "host cleared") {
+		t.Errorf("after clear: %q %q", s.target, s.prompt())
+	}
+}

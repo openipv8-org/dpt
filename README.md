@@ -169,9 +169,15 @@ seen from here.
 A certificate that expires in under 30 days is WARN, in smtp and
 connect, with the days left.
 
-In the shell, these act on the current server when no host is given:
-`sweep` pings the /24 around it and `ports` tries its ports. Tab completes
-commands, `set` options, DNS types and interface names.
+In the shell, `host <name>` sets the host the commands act on, and the
+prompt shows it beside the DNS server, which stays as it was:
+`dpt host [mail.smtp2go.com] server [8.8.8.8]>`. Giving any command a host
+(`ports mail.example.com`, `trace 1.1.1.1`) sets it too; then `ping`,
+`ping 3`, `ports`, `connect 25`, `trace` and `smtp` act on it. `host`
+alone shows it; `host clear` goes back to the server. With no host set,
+the commands act on the current server: `sweep` pings the /24 around it
+and `ports` tries its ports. Tab completes commands, `set` options, DNS
+types and interface names.
 
 ## Install
 

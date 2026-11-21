@@ -24,17 +24,15 @@ func (s *Shell) serverName() string {
 }
 
 // smtp [host] [test <user> [<password>]] [from <address>] [to <address>];
-// with no host, the last smtp host (or the current server).  smtp alone
+// with no host, the host set (else the current server).  smtp alone
 // asks, a line at a time, what to test.
 func (s *Shell) smtp(args []string) {
 	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
-	host := s.smtpHost
-	if host == "" {
-		host = s.serverName()
-	}
+	host := s.hostName()
 	if len(args) == 0 && s.lr != nil {
-		// blank is the last host smtp tested; at first, nothing
-		a, err := dpt.SMTPAsk(s.smtpHost, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
+		// blank is the host set (host, or a command given one); at
+		// first, nothing
+		a, err := dpt.SMTPAsk(s.target, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
 		if err != nil {
 			s.printf("*** %v\n", err)
 			return
@@ -75,7 +73,7 @@ func (s *Shell) smtp(args []string) {
 }
 
 func (s *Shell) runSMTP(host, user, pass, from, to string) {
-	s.smtpHost = host
+	s.target = host
 	ctx, cancel := s.ctx()
 	defer cancel()
 	p := dpt.NewSMTPPrinter(s.out, s.Color, false)
@@ -119,8 +117,11 @@ func (s *Shell) sweep(args []string) {
 		}
 	}
 	if netArg == "" {
-		if ip := net.ParseIP(s.server); ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-			netArg = s.server
+		for _, h := range []string{s.target, s.server} {
+			if ip := net.ParseIP(h); ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+				netArg = h
+				break
+			}
 		}
 	}
 	if netArg != "" {
@@ -163,9 +164,6 @@ func (s *Shell) ports(args []string) {
 	name, ip, ok := s.host(args, 0)
 	if !ok {
 		return
-	}
-	if len(args) == 0 {
-		name = s.serverName()
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
@@ -224,7 +222,7 @@ func (s *Shell) connect(args []string) {
 			o.NoTLS, args = true, args[:n-1]
 		}
 	}
-	host := s.serverName()
+	host := s.hostName()
 	switch len(args) {
 	case 1:
 	case 2:
@@ -239,6 +237,7 @@ func (s *Shell) connect(args []string) {
 		return
 	}
 	o.Port = port
+	s.target = host
 	ctx, cancel := s.ctx()
 	defer cancel()
 	l := s.live()
@@ -275,9 +274,6 @@ func (s *Shell) trace(args []string) {
 	name, ip, ok := s.host(args, 0)
 	if !ok {
 		return
-	}
-	if len(args) == 0 {
-		name = s.serverName()
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
