@@ -19,7 +19,7 @@ func (a SMTPAsked) Command() string {
 		c += " test " + a.User
 	}
 	if a.To != "" {
-		if a.From != "" && a.From != a.User {
+		if a.From != a.User {
 			c += " from " + a.From
 		}
 		c += " to " + a.To
@@ -31,9 +31,10 @@ func (a SMTPAsked) Command() string {
 var ErrSMTPAskStopped = errors.New("nothing tested")
 
 // SMTPAsk asks, a line at a time, what smtp is to test: the server
-// (host: the default shown), a user to log in as (none: no login), the
-// password, an address to send a test message to (none: no message), and
-// who it is from.  ask shows a prompt and gives the line; secret reads
+// (host: the default shown), a username (none: no login, the server knows
+// this machine by its address), the password, who a test message is from
+// (the username when it is an address; none: no message), and who it is
+// to.  ask shows a prompt and gives the line; secret reads
 // one without echoing it; say writes a line.  A wrong answer is asked
 // again.
 func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say func(string)) (SMTPAsked, error) {
@@ -65,11 +66,14 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 			say("  the server's name or address, like smtp.example.com")
 		}
 	}
-	l, err := q("log in as (Enter: no login): ")
+	l, err := q("username (Enter: no login): ")
 	if err != nil {
 		return a, err
 	}
 	a.User = l
+	if a.User == "" {
+		say("  no login: the server must know this machine by its address (as smtp2go's IP authentication does)")
+	}
 	for a.User != "" && a.Password == "" {
 		p, err := secret("password for " + Printable(a.User) + ": ")
 		if err != nil {
@@ -80,26 +84,10 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 		}
 		a.Password = p
 	}
+	// the test message: from, then to; Enter at from (with nothing to
+	// take from the username) or at to sends none
 	for {
-		l, err := q("send a test message to (Enter: none): ")
-		if err != nil {
-			return a, err
-		}
-		if l == "" || MailAddr(l) {
-			a.To = l
-			break
-		}
-		say("  an address like name@example.com")
-	}
-	if a.To == "" {
-		return a, nil
-	}
-	if a.User == "" {
-		say("  with no login it goes on port 25, as another mail server would deliver it:")
-		say("  to an address this server takes mail for")
-	}
-	for {
-		p := "from: "
+		p := "send a test message from (Enter: no message): "
 		if MailAddr(a.User) {
 			p = "from [" + a.User + "]: "
 		}
@@ -110,11 +98,29 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 		if l == "" && MailAddr(a.User) {
 			l = a.User
 		}
+		if l == "" {
+			return a, nil
+		}
 		if MailAddr(l) {
 			a.From = l
 			break
 		}
 		say("  the sender's address, like name@example.com")
+	}
+	for {
+		l, err := q("to (Enter: no message): ")
+		if err != nil {
+			return a, err
+		}
+		if l == "" {
+			a.From = ""
+			return a, nil
+		}
+		if MailAddr(l) {
+			a.To = l
+			break
+		}
+		say("  an address like name@example.com")
 	}
 	return a, nil
 }

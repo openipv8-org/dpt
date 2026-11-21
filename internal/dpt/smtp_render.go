@@ -133,6 +133,9 @@ func (p *SMTPPrinter) Send(m *SMTPSend) {
 	if m.Error != "" {
 		o.line("", o.by(m.Status, m.Error))
 	}
+	if m.Note != "" {
+		o.line("", o.dim(m.Note))
+	}
 }
 
 // Summary writes the rule and 25/smtp OK   465/submissions NONE ...

@@ -55,8 +55,9 @@ type SMTPOptions struct {
 	// User and Password, when User is set, log in after the ports are
 	// tested.  The password is in no report.
 	User, Password string
-	// To, when set, is sent a test message from From (after the login,
-	// on its connection; with no User, on port 25 as any server would).
+	// To, when set, is sent a test message from From: after the login,
+	// on its connection; with no User, with no login, on the port with
+	// the best TLS (a relay that knows this machine by its address).
 	// Agent names the sender in it (dpt v0.2.1).
 	From, To, Agent string
 	Live            *Live
@@ -136,6 +137,7 @@ type SMTPSend struct {
 	Step    string `json:"step,omitempty"` // MAIL, RCPT or DATA: where it was refused
 	Reply   string `json:"reply,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Note    string `json:"note,omitempty"`
 	Status  string `json:"status"`
 }
 
@@ -231,17 +233,47 @@ func RunSMTP(ctx context.Context, target string, o SMTPOptions) (*SMTPReport, er
 			rep.Send = &SMTPSend{From: Safe(o.From), To: Safe(o.To), Status: DPTFail, Error: "not sent: the login failed"}
 		}
 	case send != nil:
-		// no login: port 25, as a server delivering to this one would
-		rep.Send = &SMTPSend{From: Safe(o.From), To: Safe(o.To), Port: 25, Status: DPTFail, Error: "not sent: port 25 does not take mail"}
-		for _, spec := range o.Ports {
-			if spec.Port != 25 {
-				continue
+		// no login: the server decides by this machine's address (a
+		// relay like smtp2go's IP authentication) or takes mail for its
+		// own addresses.  The port that keeps the message safest: TLS
+		// with a trusted certificate, then TLS, then plain; among equals
+		// 587, 465, 25.
+		rep.Send = &SMTPSend{From: Safe(o.From), To: Safe(o.To), Status: DPTFail, Error: "not sent: no port takes mail"}
+		var use *SMTPPortSpec
+		best := 99
+		for _, n := range smtpLoginOrder {
+			for i := range rep.Ports {
+				p := &rep.Ports[i]
+				if p.Port != n || p.Banner == "" || p.NoService || p.Status == DPTFail && p.TLS == nil {
+					continue
+				}
+				t := smtpClear
+				if p.TLS != nil && p.Status != DPTFail {
+					t = smtpUntrusted
+					if p.TLS.Trusted {
+						t = smtpTrusted
+					}
+				}
+				if t < best {
+					for k := range o.Ports {
+						if o.Ports[k].Port == n {
+							use, best = &o.Ports[k], t
+						}
+					}
+				}
 			}
+		}
+		if use != nil {
 			var p SMTPPort
-			if c := smtpOpen(ctx, ip, name, spec, &o, &p, false); c != nil {
-				send(c, 25)
+			if c := smtpOpen(ctx, ip, name, *use, &o, &p, false); c != nil {
+				send(c, use.Port)
 				c.quit()
+			} else {
+				rep.Send.Port, rep.Send.Error = use.Port, "not sent: "+p.Error
 			}
+		}
+		if rep.Send.Status == DPTOK {
+			rep.Send.Note = "no login: the server let this machine's address send"
 		}
 	}
 	if rep.Send != nil && o.OnSend != nil {

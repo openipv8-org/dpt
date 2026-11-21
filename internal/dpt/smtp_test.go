@@ -392,3 +392,27 @@ func TestCertExpiry(t *testing.T) {
 		}
 	}
 }
+
+func TestSMTPSendNoLogin(t *testing.T) {
+	cert, pool := testCert(t)
+	plain := &fakeSMTP{}             // 25: no STARTTLS
+	sub := &fakeSMTP{starttls: true} // 587: STARTTLS, a trusted certificate, no AUTH (IP authentication)
+	ports := []SMTPPortSpec{{plain.serve(t, cert), false, "smtp"}, {sub.serve(t, cert), false, "submission"}}
+	smtpLoginOrder = []int{ports[1].Port, ports[0].Port}
+	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
+	r, err := RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool,
+		From: "me@example.com", To: "you@example.org", Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := r.Send
+	if m == nil || m.Status != DPTOK || m.Port != ports[1].Port || !strings.Contains(m.Note, "no login") || r.Login != nil {
+		t.Fatalf("%+v", m)
+	}
+	if got, _ := sub.got.Load().(string); !strings.Contains(got, "  as        (no login)") {
+		t.Errorf("message:\n%s", got)
+	}
+	if plain.got.Load() != nil {
+		t.Error("sent in the clear when TLS was there")
+	}
+}

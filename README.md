@@ -107,13 +107,20 @@ machine, server, port and user sent it. `from <address>` sets the
 sender; without it the user is the sender when it is an address. The
 server's reply is shown (`250 2.0.0 OK queued as ...`), or where it
 refused: at RCPT, `554 Relay access denied` means the server will not
-send for this sender. With `to` and no `test`, it is sent on 25 with no
-login, as another mail server would deliver to this one: to an address
-this server takes mail for.
+send for this sender. With `from` and `to` and no `test`, it is sent with
+no login, for a server that knows this machine by its address (smtp2go's
+IP authentication, an office relay) or one taking mail for its own
+addresses. It goes on the port that keeps it safest: TLS with a trusted
+certificate first, then 587, 465, 25.
+
+`dpt smtp` alone (and `smtp` in the shell) asks a line at a time: the
+server, the username (Enter: no login), the password, who the test
+message is from (Enter: no message), and who it is to.
 
 ```
 dpt smtp mail.smtp2go.com test jamie@example.com to someone@example.org
 dpt smtp smtp.office365.com test user@example.com from shared@example.com to me@example.com
+dpt smtp mail.smtp2go.com from me@example.com to someone@example.org      (IP authentication)
 ```
 
 `dpt sweep` pings every address on this machine's network, 25 at a time
