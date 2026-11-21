@@ -33,13 +33,8 @@ func (s *Shell) smtp(args []string) {
 		host = s.serverName()
 	}
 	if len(args) == 0 && s.lr != nil {
-		// the default: the last smtp host, or a server set by name (not
-		// a DNS server's address)
-		def := s.smtpHost
-		if def == "" {
-			def = s.srvName
-		}
-		a, err := dpt.SMTPAsk(def, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
+		// blank is the server: the one the prompt shows, dpt [<server>]>
+		a, err := dpt.SMTPAsk(s.serverName(), s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
 		if err != nil {
 			s.printf("*** %v\n", err)
 			return
