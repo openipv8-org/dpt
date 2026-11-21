@@ -40,22 +40,33 @@ func smtpPrompt(label string, w int) string {
 // ErrSMTPAskStopped: the questions were left (Ctrl-C, Ctrl-D).
 var ErrSMTPAskStopped = errors.New("nothing tested")
 
-// SMTPAsk asks, a line at a time, what smtp is to test: the server
-// (host: the default shown), a username (none: no login, the server knows
-// this machine by its address), the password, who a test message is from
-// (the username when it is an address; none: no message), and who it is
-// to.  ask shows a prompt and gives the line; secret reads
-// one without echoing it; say writes a line.  A wrong answer is asked
-// again.
-func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say func(string)) (SMTPAsked, error) {
+// SMTPAsk asks, a line at a time, what smtp is to test: the server, a
+// username (none: no login, the server knows this machine by its
+// address), the password, who a test message is from (none: no message),
+// and who it is to.  host is offered for the server; last holds the
+// answers of the time before, offered again: blank takes what is offered,
+// "-" takes none.  ask shows a prompt and gives the line; secret reads one
+// without echoing it; say writes a line.  A wrong answer is asked again.
+func SMTPAsk(host string, last SMTPAsked, ask, secret func(prompt string) (string, error), say func(string)) (SMTPAsked, error) {
 	var a SMTPAsked
 	say(SMTPAskTitle)
-	// the colons in one column: past the longest question
+	if last.Host != "" {
+		host = last.Host
+	}
+	offer := func(what, v, none string) string {
+		if v == "" {
+			return what + " (blank " + none + ")"
+		}
+		return what + " (blank uses <" + v + ">, - for none)"
+	}
 	hostQ := "hostname"
 	if host != "" {
 		hostQ = "hostname (blank uses <" + host + ">)"
 	}
-	w := max(len("username (blank is unauthenticated)"), len(hostQ))
+	// the colons in one column, past the longest question
+	const fromUser = "from (blank uses the username, - for none)"
+	w := max(len("username (blank is unauthenticated)"), len(hostQ), len(offer("username", last.User, "")),
+		len(offer("from", last.From, "")), len(offer("to", last.To, "")), len(fromUser))
 	pr := func(label string) string { return smtpPrompt(label, w) }
 	q := func(prompt string) (string, error) {
 		l, err := ask(prompt)
@@ -64,9 +75,18 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 		}
 		return strings.TrimSpace(l), nil
 	}
+	// pick: what was typed; blank, what was offered; "-", none
+	pick := func(l, offered string) string {
+		switch l {
+		case "":
+			return offered
+		case "-":
+			return ""
+		}
+		return l
+	}
 	for a.Host == "" {
-		p := pr(hostQ)
-		l, err := q(p)
+		l, err := q(pr(hostQ))
 		if err != nil {
 			return a, err
 		}
@@ -81,39 +101,45 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 			say("  the server's name or address, like smtp.example.com")
 		}
 	}
-	l, err := q(pr("username (blank is unauthenticated)"))
+	l, err := q(pr(offer("username", last.User, "is unauthenticated")))
 	if err != nil {
 		return a, err
 	}
-	a.User = l
+	a.User = pick(l, last.User)
 	if a.User == "" {
 		say("  unauthenticated: the server must know this machine by its address (smtp2go's IP authentication)")
 	}
 	for a.User != "" && a.Password == "" {
-		p, err := secret(pr("password"))
+		label := "password"
+		again := a.User == last.User && last.Password != ""
+		if again {
+			label = "password (blank uses the last one)"
+		}
+		p, err := secret(pr(label))
 		if err != nil {
 			return a, ErrSMTPAskStopped
+		}
+		if p == "" && again {
+			p = last.Password
 		}
 		if p == "" {
 			say("  a password is needed to log in (Ctrl-C to stop)")
 		}
 		a.Password = p
 	}
-	// the test message: from, then to; Enter at from (with nothing to
-	// take from the username) or at to sends none
+	// the test message: from, then to; none at either sends none
+	fromOffer, fromQ := last.From, offer("from", last.From, "sends no test message")
+	if fromOffer == "" && MailAddr(a.User) {
+		// the username just typed: named, not shown, so the colons stay
+		// in their column
+		fromOffer, fromQ = a.User, fromUser
+	}
 	for {
-		p := pr("from (blank sends no test message)")
-		if MailAddr(a.User) {
-			p = pr("from (blank uses <" + a.User + ">)")
-		}
-		l, err := q(p)
+		l, err := q(pr(fromQ))
 		if err != nil {
 			return a, err
 		}
-		if l == "" && MailAddr(a.User) {
-			l = a.User
-		}
-		if l == "" {
+		if l = pick(l, fromOffer); l == "" {
 			return a, nil
 		}
 		if MailAddr(l) {
@@ -123,11 +149,11 @@ func SMTPAsk(host string, ask, secret func(prompt string) (string, error), say f
 		say("  the sender's address, like name@example.com")
 	}
 	for {
-		l, err := q(pr("to (blank sends no test message)"))
+		l, err := q(pr(offer("to", last.To, "sends no test message")))
 		if err != nil {
 			return a, err
 		}
-		if l == "" {
+		if l = pick(l, last.To); l == "" {
 			a.From = ""
 			return a, nil
 		}

@@ -30,17 +30,17 @@ func TestSMTPAsk(t *testing.T) {
 	// Enter for the server takes the default; the user is an address,
 	// so Enter for from takes it
 	ask, secret, ps := scripted("", "me@example.com", "pw", "", "not an address", "you@example.org")
-	a, err := SMTPAsk("mail.smtp2go.com", ask, secret, say)
+	a, err := SMTPAsk("mail.smtp2go.com", SMTPAsked{}, ask, secret, say)
 	if err != nil || a != (SMTPAsked{"mail.smtp2go.com", "me@example.com", "pw", "me@example.com", "you@example.org"}) {
 		t.Fatalf("%+v %v", a, err)
 	}
 	want := []string{
-		"hostname (blank uses <mail.smtp2go.com>) : ",
-		"username (blank is unauthenticated)      : ",
-		"password                                 : ",
-		"from (blank uses <me@example.com>)       : ",
-		"to (blank sends no test message)         : ",
-		"to (blank sends no test message)         : ",
+		"hostname (blank uses <mail.smtp2go.com>)   : ",
+		"username (blank is unauthenticated)        : ",
+		"password                                   : ",
+		"from (blank uses the username, - for none) : ",
+		"to (blank sends no test message)           : ",
+		"to (blank sends no test message)           : ",
 	}
 	if strings.Join(*ps, "|") != strings.Join(want, "|") {
 		t.Errorf("prompts:\n%q", *ps)
@@ -57,7 +57,7 @@ func TestSMTPAsk(t *testing.T) {
 	// machine by its address)
 	said = nil
 	ask, secret, ps = scripted("mail.smtp2go.com", "", "me@example.com", "you@example.org")
-	a, err = SMTPAsk("", ask, secret, say)
+	a, err = SMTPAsk("", SMTPAsked{}, ask, secret, say)
 	if err != nil || a != (SMTPAsked{Host: "mail.smtp2go.com", From: "me@example.com", To: "you@example.org"}) ||
 		a.Command() != "smtp mail.smtp2go.com from me@example.com to you@example.org" || !strings.Contains(strings.Join(said, " "), "by its address") {
 		t.Errorf("no login: %+v %v %q %q", a, err, *ps, said)
@@ -70,21 +70,45 @@ func TestSMTPAsk(t *testing.T) {
 
 	// no login, no message: just the server
 	ask, secret, _ = scripted("smtp.example.com", "", "")
-	if a, err := SMTPAsk("", ask, secret, say); err != nil || a != (SMTPAsked{Host: "smtp.example.com"}) {
+	if a, err := SMTPAsk("", SMTPAsked{}, ask, secret, say); err != nil || a != (SMTPAsked{Host: "smtp.example.com"}) {
 		t.Errorf("%+v %v", a, err)
 	}
 
 	// a user that is no address: from is asked with no default
 	ask, secret, ps = scripted("smtp.example.com", "jamie", "pw", "me@example.com", "you@example.org")
-	a, err = SMTPAsk("", ask, secret, say)
-	if err != nil || a.From != "me@example.com" || (*ps)[3] != "from (blank sends no test message)  : " ||
+	a, err = SMTPAsk("", SMTPAsked{}, ask, secret, say)
+	if err != nil || a.From != "me@example.com" || (*ps)[3] != "from (blank sends no test message)         : " ||
 		!strings.Contains(a.Command(), " from me@example.com to ") {
 		t.Errorf("%+v %v %q", a, err, *ps)
 	}
 
+	// again: the last answers offered; blank takes them, the password
+	// too; "-" takes none
+	last := SMTPAsked{"mail.smtp2go.com", "me@example.com", "pw", "me@example.com", "you@example.org"}
+	ask, secret, ps = scripted("", "", "", "", "")
+	a, err = SMTPAsk("other.example.com", last, ask, secret, say)
+	if err != nil || a != last {
+		t.Errorf("again: %+v %v", a, err)
+	}
+	if !strings.HasPrefix((*ps)[0], "hostname (blank uses <mail.smtp2go.com>)") || !strings.Contains((*ps)[2], "the last one") ||
+		!strings.Contains((*ps)[4], "<you@example.org>, - for none") {
+		t.Errorf("again prompts: %q", *ps)
+	}
+	cols := map[int]bool{}
+	for _, p := range *ps {
+		cols[strings.Index(p, ": ")] = true
+	}
+	if len(cols) != 1 {
+		t.Errorf("colons not in one column: %q", *ps)
+	}
+	ask, secret, _ = scripted("", "-", "-")
+	if a, err := SMTPAsk("", last, ask, secret, say); err != nil || a != (SMTPAsked{Host: "mail.smtp2go.com"}) {
+		t.Errorf("none: %+v %v", a, err)
+	}
+
 	// Ctrl-D part way: nothing tested
 	ask, secret, _ = scripted("smtp.example.com")
-	if _, err := SMTPAsk("", ask, secret, say); err != ErrSMTPAskStopped {
+	if _, err := SMTPAsk("", SMTPAsked{}, ask, secret, say); err != ErrSMTPAskStopped {
 		t.Errorf("stopped: %v", err)
 	}
 }

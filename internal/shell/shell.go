@@ -44,10 +44,22 @@ type Shell struct {
 	search   bool
 	defname  bool
 	ntpd     string
-	// target is the host the commands act on (ping, ports, smtp, trace,
-	// connect...): set by host, or by giving one of them a host; the
-	// server stays the DNS server.  "": the server.
-	target string
+	// target is the server: the one host the commands act on (ping,
+	// ports, smtp, trace, connect...) and the DNS server lookups go to
+	// first; set by server, or by giving a command a host.  targetIP is
+	// its address; targetSet, that it was chosen (not the start's DNS
+	// server).
+	target    string
+	targetIP  string
+	targetSet bool
+	// server is the DNS server lookups fall back to when the target has
+	// no DNS service (the system's, at start); with dnsSet (set dns=) it
+	// is the one lookups always use.
+	dnsSet bool
+	noDNS  map[string]bool // targets that did not answer DNS
+	// lastSMTP: the smtp questions' last answers, offered again (the
+	// password only in memory, for this session)
+	lastSMTP dpt.SMTPAsked
 
 	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
 	Color bool
@@ -74,7 +86,9 @@ func New(out io.Writer, servers []string, o dpt.DPTDHCPOptions) *Shell {
 	}
 	if len(servers) > 0 {
 		s.initial, s.server = servers[0], servers[0]
+		s.target, s.targetIP = servers[0], servers[0]
 	}
+	s.noDNS = map[string]bool{}
 	s.sysDNS = servers
 	return s
 }
@@ -107,21 +121,42 @@ func (s *Shell) Run(in *os.File) error {
 	}
 }
 
+// prompt is dpt [<server>]>: dns=, ntpd= and the interface are in info
+// and set all, not in the way here.
 func (s *Shell) prompt() string {
-	srv := s.server
+	if s.target == "" {
+		return "dpt> "
+	}
+	return "dpt [" + s.target + "]> "
+}
+
+// settings writes the shell's settings, as info ends with them.
+func (s *Shell) settings() {
+	dns := s.serverName()
 	if s.srvName != "" {
-		srv = s.srvName
+		dns += " (" + s.server + ")"
 	}
-	if srv == "" {
-		srv = "none"
+	if dns == "" {
+		dns = "none"
 	}
-	if s.iface != "" {
-		srv += " " + s.iface
+	if s.dnsSet {
+		dns += "   always (set dns= clears it)"
+	} else {
+		dns = "the server, else " + dns
 	}
-	if s.target != "" {
-		return "dpt host [" + s.target + "] server [" + srv + "]> "
+	or := func(v, none string) string {
+		if v == "" {
+			return none
+		}
+		return v
 	}
-	return "dpt [" + srv + "]> "
+	s.printf("\nSHELL     server               %s\n", or(s.target, "none (server <name>)"))
+	if s.targetIP != "" && s.targetIP != s.target {
+		s.printf("                               %s\n", s.targetIP)
+	}
+	s.printf("          dns=                 %s\n", dns)
+	s.printf("          ntpd=                %s\n", or(s.ntpd, "(the server)"))
+	s.printf("          interface            %s\n", or(s.iface, "(dpt chooses)"))
 }
 
 // ctx is a context that Ctrl-C ends.
@@ -148,18 +183,10 @@ func (s *Shell) Do(line string) bool {
 	case cmd == "help" || cmd == "?":
 		s.help()
 	case cmd == "server" || cmd == "lserver":
-		if len(args) != 1 {
-			s.printf("usage: %s <host>\n", cmd)
-			break
-		}
-		via := s.server
-		if cmd == "lserver" {
-			via = s.initial
-		}
-		s.setServer(args[0], via)
+		s.setTarget(args)
 	case cmd == "root":
-		s.server, s.srvName = rootServer, "a.root-servers.net"
-		s.printf("Default server: a.root-servers.net\nAddress: %s\n\n", s.shown(rootServer))
+		s.server, s.srvName, s.dnsSet = rootServer, "a.root-servers.net", true
+		s.printf("dns=a.root-servers.net (%s): lookups always go to it (set dns= clears it)\n\n", s.shown(rootServer))
 	case cmd == "set":
 		if len(args) == 0 {
 			s.printf("usage: set <option>[=<value>]  (set all lists them)\n")
@@ -168,14 +195,12 @@ func (s *Shell) Do(line string) bool {
 		for _, a := range args {
 			s.set(a)
 		}
-	case strings.HasPrefix(cmd, "ntpd="):
+	case strings.HasPrefix(cmd, "ntpd="), strings.HasPrefix(cmd, "dns="):
 		s.set(f[0])
 	case cmd == "ls":
 		s.ls(args)
 	case cmd == "finger" || cmd == "view":
 		s.printf("%s: not supported\n", cmd)
-	case cmd == "host":
-		s.setHost(args)
 	case cmd == "ping":
 		s.ping(args)
 	case cmd == "time":
@@ -190,6 +215,8 @@ func (s *Shell) Do(line string) bool {
 		l.Stop()
 		cancel()
 		dpt.RenderDPTInfo(s.out, r, s.Color)
+		s.settings()
+		s.printf("\n")
 	case cmd == "interface":
 		s.chooseIface(args)
 	case cmd == "dpt":
@@ -214,9 +241,9 @@ func (s *Shell) Do(line string) bool {
 			s.printf("*** unknown command: %s (help lists them)\n", f[0])
 			break
 		}
-		server := s.server
+		server := "" // the server, else dns=
 		if len(f) == 2 {
-			a, err := s.resolveHost(f[1], s.server)
+			a, err := s.resolve(f[1])
 			if err != nil {
 				s.printf("*** can't find address for server %s: %v\n", f[1], err)
 				break
@@ -230,16 +257,15 @@ func (s *Shell) Do(line string) bool {
 
 func (s *Shell) help() {
 	s.printf(`Commands (nslookup):
-  <name>                  look up name with the current server and type
+  server [<host> | clear] the one server: the commands below act on it, and lookups go to it
+                          first; with no DNS service there, they use dns= and say so. The
+                          prompt shows it: dpt [<host>]>. Giving a command a host sets it;
+                          clear goes back to the start's DNS server
+  set dns=<server>        lookups always go to this server (set dns= clears it); info shows it
+  <name>                  look up name with the server (else dns=) and the type
   <address>               look up the name of an address (PTR)
-  <name> <server>         look up name with another server, once
-  server <host>           set the default server (resolved with the current one)
-  host [<host> | clear]   set the host the commands below act on, show it, or clear it: the prompt
-                          shows dpt host [<host>] server [<server>]>; the server stays the
-                          DNS server. Giving any of them a host sets it too. No host set:
-                          they act on the server
-  lserver <host>          set the default server (resolved with the first one)
-  root                    set the default server to a root server
+  <name> <server>         look up name with another DNS server, once
+  root                    dns= a root server
   set type=<T> | q=<T>    A AAAA MX NS SOA TXT CNAME PTR SRV CAA DS DNSKEY ANY ...
   set class=<C>           IN, CH (version.bind), HS
   set port=<n>  set timeout=<s>  set retry=<n>
@@ -251,7 +277,7 @@ func (s *Shell) help() {
 dpt:
   ping [host] [count]     ICMP echo (default the host, 5)
   time [host]             NTP time of host (default ntpd, else the server) against the references
-  ntpd=<server>           the server time asks (set ntpd= clears it)
+  ntpd=<server>           the server time asks (set ntpd= clears it: the server)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
   info                    this machine's DHCP lease, gateway, DNS and NTP servers, clock against time services
   interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
@@ -280,37 +306,75 @@ dpt:
 `)
 }
 
-func (s *Shell) setServer(host, via string) {
-	a, err := s.resolveHost(host, via)
+// setDNS is set dns=<server>: the DNS server lookups always use.
+func (s *Shell) setDNS(host string) {
+	a, err := s.resolve(host)
 	if err != nil {
-		s.printf("*** can't find address for server %s: %v\n", host, err)
+		s.printf("*** can't find address for dns=%s: %v\n", host, err)
 		return
 	}
-	s.server = a
-	s.srvName = ""
+	s.server, s.srvName, s.dnsSet = a, "", true
 	if a != host {
 		s.srvName = host
 	}
-	s.printf("Default server: %s\nAddress: %s\n\n", host, s.shown(a))
+	s.printf("dns=%s (%s): lookups always go to it (set dns= clears it)\n", host, s.shown(a))
 }
 
-// resolveHost gives host's address: itself, or an A/AAAA lookup on via.
-func (s *Shell) resolveHost(host, via string) (string, error) {
+// dnsOrder is where lookups go: set dns= alone; else the server when it
+// has DNS, then the fallback.
+func (s *Shell) dnsOrder() []string {
+	if s.dnsSet || s.targetIP == "" || s.targetIP == s.server || s.noDNS[s.targetIP] {
+		return []string{s.server}
+	}
+	return []string{s.targetIP, s.server}
+}
+
+// noDNSWarn says the server did not answer DNS, once a lookup found it.
+func (s *Shell) noDNSWarn() {
+	s.printf("*** this server, %s, has no DNS service: using %s\n", s.target, s.serverName())
+}
+
+// askAny asks the servers in dnsOrder: the server first, briefly, then
+// the fallback; it gives the answer and who gave it.
+func (s *Shell) askAny(ctx context.Context, name string, t uint16) (*dpt.DNSAnswer, string, error) {
+	order := s.dnsOrder()
+	for i, srv := range order {
+		if i < len(order)-1 {
+			// the server: one quick try; no DNS there is no reason to wait
+			o := dpt.DNSAskOptions{Type: t, Class: s.qclass, NoRecurse: !s.recurse, TCP: s.vc}
+			a, err := dpt.DNSAsk(ctx, s.addr(srv), name, o, min(s.timeout, 2*time.Second))
+			if err == nil {
+				return a, srv, nil
+			}
+			if ctx.Err() != nil {
+				return nil, srv, err
+			}
+			s.noDNS[srv] = true
+			s.noDNSWarn()
+			continue
+		}
+		a, err := s.ask(ctx, srv, name, t)
+		return a, srv, err
+	}
+	return nil, "", errors.New("no DNS server")
+}
+
+// resolve gives host's address: itself, or looked up as lookups are
+// (the server, else the fallback), else by the system.
+func (s *Shell) resolve(host string) (string, error) {
 	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
 		return ip.String(), nil
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	if via != "" {
-		for _, t := range []uint16{dpt.DNSTypeA, dpt.DNSTypeAAAA} {
-			a, err := dpt.DNSAsk(ctx, s.addr(via), fqdn(host), dpt.DNSAskOptions{Type: t}, s.timeout)
-			if err != nil {
-				continue
-			}
-			for _, r := range a.Answer {
-				if r.Type == t {
-					return net.IP(r.Data).String(), nil
-				}
+	for _, t := range []uint16{dpt.DNSTypeA, dpt.DNSTypeAAAA} {
+		a, _, err := s.askAny(ctx, fqdn(host), t)
+		if err != nil || a == nil {
+			continue
+		}
+		for _, r := range a.Answer {
+			if r.Type == t {
+				return net.IP(r.Data).String(), nil
 			}
 		}
 	}
@@ -404,6 +468,19 @@ func (s *Shell) set(a string) {
 		s.search = !strings.HasPrefix(k, "no")
 	case "defname", "def", "nodefname", "nodef":
 		s.defname = !strings.HasPrefix(k, "no")
+	case "dns":
+		// set dns=<server>: lookups always go there; set dns=: they go to
+		// the server again, else the start's DNS server
+		if !hasV {
+			s.printf("usage: set dns=<server>, or set dns= to clear it\n")
+			return
+		}
+		if v = strings.TrimSpace(v); v == "" {
+			s.dnsSet, s.server, s.srvName = false, s.initial, ""
+			s.printf("dns= cleared: lookups go to the server, else %s\n", s.initial)
+			return
+		}
+		s.setDNS(v)
 	case "ntpd":
 		if !hasV {
 			bad()
@@ -433,7 +510,12 @@ func (s *Shell) showAll() {
 	if ntpd == "" {
 		ntpd = "(the server)"
 	}
-	s.printf("Default server: %s\nAddress: %s\n\nSet options:\n", srv, s.shown(s.server))
+	host := s.target
+	if host == "" {
+		host = "(none)"
+	}
+	_ = srv
+	s.printf("server = %s\ndns = %s (%s)\n\nSet options:\n", host, srv, s.shown(s.server))
 	s.printf("  %svc\t\t%sdebug\t\t%sd2\n", no(s.vc), no(s.debug), no(s.d2))
 	s.printf("  %ssearch\t%srecurse\t%sdefname\n", no(s.search), no(s.recurse), no(s.defname))
 	s.printf("  timeout = %d\tretry = %d\tport = %d\n", int(s.timeout/time.Second), s.retry, s.port)
@@ -500,9 +582,10 @@ func (s *Shell) ask(ctx context.Context, server, name string, t uint16) (*dpt.DN
 	return nil, err
 }
 
-// lookup is nslookup's plain lookup.
+// lookup is nslookup's plain lookup: on server, or ("") the server, else
+// the fallback.
 func (s *Shell) lookup(name, server string) {
-	if server == "" {
+	if server == "" && s.server == "" && s.targetIP == "" {
 		s.printf("*** no server: use server <address>\n")
 		return
 	}
@@ -516,10 +599,21 @@ func (s *Shell) lookup(name, server string) {
 		}
 		names = []string{dpt.DNSReverseName(ip) + "."}
 	}
-	s.printf("Server:\t\t%s\nAddress:\t%s\n\n", server, s.shown(server))
 	var last *dpt.DNSAnswer
+	header := false
 	for _, n := range names {
-		a, err := s.ask(ctx, server, n, t)
+		var a *dpt.DNSAnswer
+		var err error
+		used := server
+		if server != "" {
+			a, err = s.ask(ctx, server, n, t)
+		} else {
+			a, used, err = s.askAny(ctx, n, t)
+		}
+		if !header {
+			s.printf("Server:\t\t%s\nAddress:\t%s\n\n", used, s.shown(used))
+			header = true
+		}
 		if err != nil {
 			s.printf(";; connection timed out; no servers could be reached\n\n")
 			return
@@ -666,12 +760,13 @@ func (s *Shell) ls(args []string) {
 	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	rs, err := dpt.DNSZoneTransfer(ctx, s.addr(s.server), fqdn(dom), s.timeout*5)
+	srv := s.dnsOrder()[0]
+	rs, err := dpt.DNSZoneTransfer(ctx, s.addr(srv), fqdn(dom), s.timeout*5)
 	if err != nil && len(rs) == 0 {
 		s.printf("*** can't list domain %s: %v\n", dom, err)
 		return
 	}
-	s.printf("[%s]\n", s.server)
+	s.printf("[%s]\n", srv)
 	for _, r := range rs {
 		if !all && r.Type != dpt.DNSTypeA && r.Type != dpt.DNSTypeAAAA && r.Type != dpt.DNSTypeNS {
 			continue
@@ -683,64 +778,63 @@ func (s *Shell) ls(args []string) {
 	}
 }
 
-// host gives the host a command acts on, as typed, and its address: the
-// argument (which becomes the host), else the host set, else the
-// current server.
+// host gives the server a command acts on, as typed, and its address:
+// the argument (which becomes the server), else the server.
 func (s *Shell) host(args []string, i int) (string, string, bool) {
-	name := ""
-	switch {
-	case len(args) > i:
-		name = args[i]
-	case s.target != "":
-		name = s.target
-	case s.server == "":
-		s.printf("*** no host: give one, or set it with host <name>\n")
-		return "", "", false
-	default:
-		return s.serverName(), s.server, true
+	if len(args) <= i {
+		if s.target == "" {
+			s.printf("*** no server: give one, or set it with server <name>\n")
+			return "", "", false
+		}
+		return s.target, s.targetIP, true
 	}
-	a, err := s.resolveHost(name, s.server)
+	name := args[i]
+	a, err := s.resolve(name)
 	if err != nil {
 		s.printf("*** can't find %s: %v\n", name, err)
 		return "", "", false
 	}
-	s.target = name
+	s.setTargetTo(name, a)
 	return name, a, true
 }
 
-// hostName is the host the commands act on, as typed: the host set, else
-// the server.
-func (s *Shell) hostName() string {
-	if s.target != "" {
-		return s.target
+// setTargetTo makes name (at a) the server.
+func (s *Shell) setTargetTo(name, a string) {
+	if name != s.target {
+		s.target, s.targetIP, s.targetSet = name, a, true
 	}
-	return s.serverName()
 }
 
-// setHost is host [<name> | clear]: set the host the commands act on,
-// show it, or clear it (back to the server).
-func (s *Shell) setHost(args []string) {
+// hostName is the server ("" none).
+func (s *Shell) hostName() string { return s.target }
+
+// setTarget is server [<name> | clear]: the one server the commands act
+// on and lookups go to first (as nslookup's server), shown, or cleared
+// back to the start's DNS server.
+func (s *Shell) setTarget(args []string) {
 	switch {
-	case len(args) == 0 && s.target == "":
-		s.printf("no host set: the commands act on the server, %s\n", s.serverName())
 	case len(args) == 0:
-		s.printf("host %s   (server %s)\n", s.target, s.serverName())
+		s.printf("Default server: %s\nAddress: %s\n\n", s.target, s.shown(s.targetIP))
 	case len(args) == 1 && strings.EqualFold(args[0], "clear"):
-		s.target = ""
-		s.printf("host cleared: the commands act on the server, %s\n", s.serverName())
+		s.target, s.targetIP, s.targetSet = s.initial, s.initial, false
+		s.printf("Default server: %s\nAddress: %s\n\n", s.target, s.shown(s.targetIP))
 	case len(args) > 1:
-		s.printf("usage: host [<name or address> | clear]\n")
+		s.printf("usage: server [<name or address> | clear]\n")
 	default:
-		if _, _, ok := s.host(args, 0); ok {
-			s.printf("host %s   (server %s stays the DNS server)\n", s.target, s.serverName())
+		a, err := s.resolve(args[0])
+		if err != nil {
+			s.printf("*** can't find address for server %s: %v\n", args[0], err)
+			return
 		}
+		s.target, s.targetIP, s.targetSet = args[0], a, true
+		s.printf("Default server: %s\nAddress: %s\n\n", args[0], s.shown(a))
 	}
 }
 
 func (s *Shell) opts() dpt.DPTOptions {
 	o := s.DPT.DPTOptions
 	o.Timeout = s.timeout
-	o.Resolver = dpt.NewResolver([]string{s.server})
+	o.Resolver = dpt.NewResolver(s.dnsOrder()[len(s.dnsOrder())-1:]) // names: the DNS server that answers
 	return o
 }
 
@@ -817,10 +911,10 @@ func (s *Shell) time(args []string) {
 	case s.ntpd != "":
 		host = s.ntpd
 	default:
-		host = s.server
+		host = s.targetIP
 	}
 	if host == "" {
-		s.printf("*** no host, no ntpd and no server\n")
+		s.printf("*** no server: give one, set it with server <name>, or set ntpd=<server>\n")
 		return
 	}
 	ctx, cancel := s.ctx()

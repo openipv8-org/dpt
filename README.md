@@ -169,15 +169,19 @@ seen from here.
 A certificate that expires in under 30 days is WARN, in smtp and
 connect, with the days left.
 
-In the shell, `host <name>` sets the host the commands act on, and the
-prompt shows it beside the DNS server, which stays as it was:
-`dpt host [mail.smtp2go.com] server [8.8.8.8]>`. Giving any command a host
-(`ports mail.example.com`, `trace 1.1.1.1`) sets it too; then `ping`,
-`ping 3`, `ports`, `connect 25`, `trace` and `smtp` act on it. `host`
-alone shows it; `host clear` goes back to the server. With no host set,
-the commands act on the current server: `sweep` pings the /24 around it
-and `ports` tries its ports. Tab completes commands, `set` options, DNS
-types and interface names.
+In the shell, `server <name>` sets the one server, as in nslookup, and the
+prompt shows it: `dpt [mail.smtp2go.com]>`. The commands act on it
+(`ping`, `ping 3`, `ports`, `connect 25`, `trace`, `smtp`), and giving one
+of them a host makes that the server. Lookups go to it first; when it has
+no DNS service, they go to the DNS server dpt started with, and say so:
+`*** this server, mail.smtp2go.com, has no DNS service: using 8.8.8.8`.
+`set dns=<server>` sends every lookup to that server instead (`set dns=`
+clears it); `info` shows the server, `dns=`, `ntpd=` and the interface.
+`server clear` goes back to the DNS server dpt started with. With a
+server chosen, `sweep` pings the /24 around it. The `smtp` questions offer
+the last answers again (the password too, kept in memory only until dpt
+exits): blank takes what is offered, `-` takes none. Tab completes
+commands, `set` options, DNS types and interface names.
 
 ## Install
 

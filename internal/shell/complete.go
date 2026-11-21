@@ -10,7 +10,7 @@ import (
 
 // shellCommands are the commands Tab completes, as help lists them.
 var shellCommands = []string{
-	"server", "lserver", "host", "root", "set", "ls", "exit", "quit", "help",
+	"server", "dns=", "root", "set", "ls", "exit", "quit", "help",
 	"ping", "time", "ntpd=", "trydhcp", "info", "interface", "dpt", "features",
 	"smtp", "sweep", "ports", "connect", "trace", "outside-ip",
 }

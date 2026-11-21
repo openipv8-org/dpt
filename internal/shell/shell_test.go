@@ -189,12 +189,12 @@ func TestCommands(t *testing.T) {
 		}
 	}
 	out.Reset()
-	s.Do("server 192.0.2.99")
-	if s.server != "192.0.2.99" || !strings.Contains(out.String(), "Default server: 192.0.2.99") {
-		t.Errorf("server:\n%s", out)
+	s.Do("dns=192.0.2.99")
+	if s.server != "192.0.2.99" || !strings.Contains(out.String(), "dns=192.0.2.99") {
+		t.Errorf("dns=:\n%s", out)
 	}
 	s.Do("root")
-	if s.server != rootServer || s.prompt() != "dpt [a.root-servers.net]> " {
+	if s.server != rootServer || !s.dnsSet {
 		t.Errorf("root: %s %q", s.server, s.prompt())
 	}
 }
@@ -314,34 +314,56 @@ func TestAddressColumns(t *testing.T) {
 	}
 }
 
-func TestHostSetting(t *testing.T) {
+func TestServerSetting(t *testing.T) {
 	s, out := newTestShell(t)
-	server := s.prompt()
-	s.Do("host")
-	if !strings.Contains(out.String(), "no host set") {
-		t.Errorf("%s", out)
+	dns := s.server
+	// at the start the server is the DNS server, as nslookup's
+	if s.prompt() != "dpt ["+dns+"]> " || s.target != dns || s.targetSet {
+		t.Errorf("start: prompt %q", s.prompt())
 	}
-	s.Do("host 192.0.2.25")
-	if p := s.prompt(); !strings.HasPrefix(p, "dpt host [192.0.2.25] server [") || !strings.Contains(p, strings.TrimSuffix(strings.TrimPrefix(server, "dpt ["), "]> ")) {
-		t.Errorf("prompt %q (was %q)", p, server)
+	// server: the one server; dns= stays the fallback
+	s.Do("server 127.0.0.2")
+	if s.prompt() != "dpt [127.0.0.2]> " || s.server != dns || s.targetIP != "127.0.0.2" {
+		t.Errorf("prompt %q dns %q", s.prompt(), s.server)
 	}
-	if s.hostName() != "192.0.2.25" {
-		t.Errorf("host %q", s.hostName())
+	// it has no DNS service (nothing on 127.0.0.2): a lookup says so and
+	// uses the fallback, which answers
+	out.Reset()
+	s.Do("www.example.test")
+	if !strings.Contains(out.String(), "this server, 127.0.0.2, has no DNS service: using "+dns) ||
+		!strings.Contains(out.String(), "Address: 192.0.2.7") || !strings.Contains(out.String(), "Server:\t\t"+dns) {
+		t.Errorf("fallback:\n%s", out)
 	}
-	// a command given a host sets it
+	// set dns=: lookups always go there, the server stays
+	s.Do("set dns=127.0.0.1")
+	if s.target != "127.0.0.2" || !s.dnsSet || s.dnsOrder()[0] != "127.0.0.1" || len(s.dnsOrder()) != 1 {
+		t.Errorf("dns=: server %q order %v", s.target, s.dnsOrder())
+	}
+	out.Reset()
+	s.settings()
+	if !strings.Contains(out.String(), "server               127.0.0.2") || !strings.Contains(out.String(), "dns=                 127.0.0.1   always") {
+		t.Errorf("settings:\n%s", out)
+	}
+	s.Do("set dns=")
+	if s.dnsSet || s.server != dns {
+		t.Errorf("dns= cleared: %v %q", s.dnsSet, s.server)
+	}
+	// a command given a host sets the server
 	s.Do("connect 127.0.0.1 1")
 	if s.target != "127.0.0.1" {
 		t.Errorf("after connect: %q", s.target)
 	}
-	s.Do("host clear")
-	if s.target != "" || s.prompt() != server || !strings.Contains(out.String(), "host cleared") {
-		t.Errorf("after clear: %q %q", s.target, s.prompt())
+	// clear: back to the start's DNS server
+	s.Do("server clear")
+	if s.target != dns || s.targetSet {
+		t.Errorf("after clear: %q", s.target)
 	}
-	// a host that does not resolve does not become the host
+	// a host that does not resolve does not become the server
 	s.Do("smtp no-such-host.invalid")
 	s.Do("connect no-such-host.invalid 25")
 	s.Do("ports no-such-host.invalid")
-	if s.target != "" {
-		t.Errorf("an unresolved host became the host: %q", s.target)
+	s.Do("server no-such-host.invalid")
+	if s.target != dns {
+		t.Errorf("an unresolved host became the server: %q", s.target)
 	}
 }

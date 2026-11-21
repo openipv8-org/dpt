@@ -29,15 +29,20 @@ func (s *Shell) serverName() string {
 func (s *Shell) smtp(args []string) {
 	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
 	host := s.hostName()
-	// smtp alone, or smtp prompt: the questions
+	// smtp alone, or smtp prompt: the questions; blank is the host
 	if (len(args) == 0 || len(args) == 1 && strings.EqualFold(args[0], "prompt")) && s.lr != nil {
-		// blank is the host set (host, or a command given one); at
-		// first, nothing
-		a, err := dpt.SMTPAsk(s.target, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
+		// offered: the last answers; for the server at first, the server
+		// when one was chosen (not the start's DNS server)
+		offer := ""
+		if s.targetSet {
+			offer = s.target
+		}
+		a, err := dpt.SMTPAsk(offer, s.lastSMTP, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
 		if err != nil {
 			s.printf("*** %v\n", err)
 			return
 		}
+		s.lastSMTP = a // offered next time; the password in memory only
 		s.printf("  (the same as: %s)\n\n", a.Command())
 		s.runSMTP(a.Host, a.User, a.Password, a.From, a.To)
 		return
@@ -92,14 +97,15 @@ func (s *Shell) runSMTP(host, user, pass, from, to string) {
 		s.printf("*** %v\n", err)
 		return
 	}
-	s.target = host // it resolved: it is the host now
+	if r != nil && len(r.Target.Tested) > 0 {
+		s.setTargetTo(host, r.Target.Tested[0]) // it resolved: it is the server now
+	}
 	p.Summary(r)
 	s.printf("\n")
 }
 
-// sweep [ports] [network]: with no network, the /24 around the current
-// server (when it is an IPv4 address off this machine), else the
-// interface's network.
+// sweep [ports] [network]: with no network, the /24 around the host
+// (when it is an IPv4 address), else the interface's network.
 func (s *Shell) sweep(args []string) {
 	o := dpt.SweepOptions{Iface: s.iface}
 	if s.DPT.Timeout > 0 {
@@ -118,11 +124,8 @@ func (s *Shell) sweep(args []string) {
 		}
 	}
 	if netArg == "" {
-		for _, h := range []string{s.target, s.server} {
-			if ip := net.ParseIP(h); ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-				netArg = h
-				break
-			}
+		if ip := net.ParseIP(s.target); s.targetSet && ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+			netArg = s.target
 		}
 	}
 	if netArg != "" {
@@ -248,7 +251,7 @@ func (s *Shell) connect(args []string) {
 		s.printf("*** %v\n", err)
 		return
 	}
-	s.target = host // it resolved: it is the host now
+	s.setTargetTo(host, r.Target.Tested[0]) // it resolved: it is the server now
 	dpt.RenderConnect(s.out, r, s.Color)
 	if conn == nil {
 		s.printf("\n")

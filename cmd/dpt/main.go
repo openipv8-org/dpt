@@ -566,7 +566,7 @@ func askSMTP() (dpt.SMTPAsked, error) {
 		fmt.Fprintln(os.Stderr)
 		return string(b), err
 	}
-	return dpt.SMTPAsk("", ask, secret, func(l string) { fmt.Fprintln(os.Stderr, l) })
+	return dpt.SMTPAsk("", dpt.SMTPAsked{}, ask, secret, func(l string) { fmt.Fprintln(os.Stderr, l) })
 }
 
 // readPassword asks for the password with no echo on a terminal; from a
