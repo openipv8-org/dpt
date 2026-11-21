@@ -173,7 +173,13 @@ func (s *Shell) Do(line string) bool {
 	case cmd == "trydhcp":
 		s.trydhcp(args)
 	case cmd == "info":
-		dpt.RenderDPTInfo(s.out, dpt.DPTInfoGather(s.sysDNS, s.iface), s.Color)
+		r := dpt.DPTInfoGather(s.sysDNS, s.iface)
+		ctx, cancel := s.ctx()
+		l := s.live()
+		dpt.DPTInfoTime(ctx, r, s.DPT.NTP, s.DPT.Timeout, l)
+		l.Stop()
+		cancel()
+		dpt.RenderDPTInfo(s.out, r, s.Color)
 	case cmd == "interface":
 		s.chooseIface(args)
 	case cmd == "dpt":
@@ -229,7 +235,7 @@ dpt:
   time [host]             NTP time of host (default ntpd, else the server) against the references
   ntpd=<server>           the server time asks (set ntpd= clears it)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
-  info                    this machine's DHCP lease, gateway, DNS and NTP servers (sends nothing)
+  info                    this machine's DHCP lease, gateway, DNS and NTP servers, clock against time services
   interface [name|auto]   choose the interface trydhcp and info use (no name: a list to choose from)
   dpt [host]              the whole test: ping, DNS, time, features
   features [host]         what the address offers

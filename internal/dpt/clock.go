@@ -32,6 +32,36 @@ type DPTClock struct {
 	ReadFrom []string   `json:"read_from,omitempty"`
 }
 
+// DPTInfoNTP are the time services info compares this clock with: the
+// big ones, and NIST, which keeps the US time scale.
+var DPTInfoNTP = []string{"time.google.com", "time.windows.com", "time.aws.com", "time.apple.com", "time.nist.gov"}
+
+// DPTInfoTime asks the time services (ntp, nil: DPTInfoNTP), and the
+// servers this machine is set to use, how far off this clock is.  It is
+// the one thing info sends: an NTP time request to each.
+func DPTInfoTime(ctx context.Context, r *DPTInfo, ntp []string, timeout time.Duration, live *Live) {
+	if len(ntp) == 0 {
+		ntp = DPTInfoNTP
+	}
+	var extra []DPTTimeAsk
+	for _, s := range r.NTP {
+		if !slicesContainsFold(ntp, s) {
+			extra = append(extra, DPTTimeAsk{Server: s, Role: "system"})
+		}
+	}
+	t := DPTTimeRun(ctx, extra, DPTOptions{NTP: ntp, Timeout: timeout, Live: live})
+	r.Time = &t
+}
+
+func slicesContainsFold(l []string, s string) bool {
+	for _, x := range l {
+		if strings.EqualFold(x, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // DPTClockGather reads the clock.
 func DPTClockGather() *DPTClock {
 	c := &DPTClock{Now: time.Now()}

@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-// dpt info: what this machine already has, read from the system, nothing
-// sent: each interface's address and gateway, the DHCP lease it holds
+// dpt info: what this machine already has, read from the system (only
+// NTP time requests are sent, to see how far off its clock is): each interface's address and gateway, the DHCP lease it holds
 // (server, times, the DNS and NTP servers in it), and the DNS and NTP
 // servers the machine uses.
 
@@ -32,6 +32,7 @@ type DPTInfo struct {
 	NTPSource string         `json:"ntp_source,omitempty"`
 	VPN       []string       `json:"vpn_tunnel,omitempty"`
 	Clock     *DPTClock      `json:"clock,omitempty"`
+	Time      *DPTTime       `json:"time,omitempty"` // the time services and this clock against them
 }
 
 // DPTInfoIface is one interface.
@@ -484,4 +485,7 @@ func RenderDPTInfo(w io.Writer, r *DPTInfo, color bool) {
 		o.line("", o.red("A VPN TUNNEL IS UP ("+strings.Join(r.VPN, ", ")+")"))
 	}
 	renderClock(o, r.Clock)
+	if r.Time != nil {
+		renderDPTTime(o, *r.Time)
+	}
 }

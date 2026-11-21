@@ -159,6 +159,9 @@ func run(args []string) int {
 
 	case "info":
 		r := dpt.DPTInfoGather(sysdns.Servers(), c.Opts.Iface)
+		l := live()
+		dpt.DPTInfoTime(ctx, r, c.Opts.NTP, c.Opts.Timeout, l)
+		l.Stop()
 		if c.JSON {
 			dpt.DPTJSON(os.Stdout, r)
 		} else {

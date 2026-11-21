@@ -161,7 +161,7 @@ type DPTDNS struct {
 // DPTTimeRow is one NTP server's answer.
 type DPTTimeRow struct {
 	Server    string `json:"server"`
-	Role      string `json:"role"` // reference, target, dhcp
+	Role      string `json:"role"` // reference, target, dhcp, system (info: the machine's own server)
 	Addr      string `json:"address,omitempty"`
 	OK        bool   `json:"ok"`
 	Offset    Ms     `json:"offset_ms"`

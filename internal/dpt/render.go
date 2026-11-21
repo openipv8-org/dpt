@@ -341,8 +341,11 @@ func renderDPTTime(o dptOut, t DPTTime) {
 	names := make([]string, len(t.Rows))
 	for i, r := range t.Rows {
 		names[i] = r.Server
-		if r.Role == "dhcp" {
+		switch r.Role {
+		case "dhcp":
 			names[i] += " (dhcp)"
+		case "system":
+			names[i] += " (this machine's)"
 		}
 		w = max(w, len(names[i]))
 	}

@@ -4,6 +4,7 @@ package dpt
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -46,5 +47,20 @@ Leap status     : Normal
 	clockFromW32tm(c, "Leap Indicator: 0(no warning)\r\nLast Successful Sync Time: 11/20/2026 6:01:12 PM\r\nSource: time.windows.com,0x9\r\nPhase Offset: -0.0021000s\r\n")
 	if c.Synced != "yes" || c.Source != "time.windows.com" || c.Offset != "-2.100 ms" || c.Last == nil || c.Last.Hour() != 18 {
 		t.Errorf("windows synced: %+v", c)
+	}
+}
+
+func TestInfoTime(t *testing.T) {
+	ref := fakeNTP(t, ntpServerAhead(0, 1, 0))
+	own := fakeNTP(t, ntpServerAhead(0, 2, 0))
+	r := &DPTInfo{NTP: []string{own, ref}} // ref is set here too: asked once
+	DPTInfoTime(context.Background(), r, []string{ref}, time.Second, nil)
+	if r.Time == nil || len(r.Time.Rows) != 2 || r.Time.Rows[1].Role != "system" || r.Time.LocalStatus != DPTOK {
+		t.Fatalf("%+v", r.Time)
+	}
+	var b bytes.Buffer
+	RenderDPTInfo(&b, r, false)
+	if !strings.Contains(b.String(), own+" (this machine's)") || !strings.Contains(b.String(), "this clock") {
+		t.Errorf("%s", b.String())
 	}
 }
