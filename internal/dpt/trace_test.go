@@ -37,6 +37,19 @@ func (p *fakePath) open(net.IP) (TraceEchoer, error) {
 
 func (e *fakeEcho) Close() error { return nil }
 
+func (e *fakeEcho) EchoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	res := make([]TraceResult, len(probes))
+	for i, p := range probes {
+		if e.p.shared && len(probes) > 1 {
+			res[i] = TraceResult{Err: ErrEchoTimeout} // many at once: the NAT loses them
+			continue
+		}
+		r, err := e.EchoTTL(p.Seq, p.TTL, timeout)
+		res[i] = TraceResult{EchoReply: r, Err: err}
+	}
+	return res
+}
+
 func (e *fakeEcho) EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, error) {
 	p := e.p
 	p.mu.Lock()
@@ -47,22 +60,7 @@ func (e *fakeEcho) EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, erro
 	n := p.seen[ttl]
 	p.mu.Unlock()
 	if p.shared {
-		// the NAT answers as the address at once, to the first socket
-		// only, and loses the answers when several echoes are out
-		p.mu.Lock()
-		p.out++
-		p.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-		p.mu.Lock()
-		crowded := p.out > 1
-		p.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-		p.mu.Lock()
-		p.out--
-		p.mu.Unlock()
-		if e != p.first || crowded {
-			return EchoReply{}, ErrEchoTimeout
-		}
+		// the NAT answers as the address at once
 		return EchoReply{From: p.target, RTT: 20 * time.Millisecond}, nil
 	}
 	if ttl > len(p.hops) {
@@ -73,6 +71,8 @@ func (e *fakeEcho) EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, erro
 		return EchoReply{}, ErrEchoTimeout
 	case strings.HasPrefix(h, "lossy ") && n == 1:
 		return EchoReply{}, ErrEchoTimeout
+	case strings.HasPrefix(h, "refuse "):
+		return EchoReply{From: strings.TrimPrefix(h, "refuse "), RTT: 5 * time.Millisecond, Unreachable: true, Code: 13}, nil
 	default:
 		return EchoReply{From: strings.TrimPrefix(h, "lossy "), RTT: time.Duration(ttl) * time.Millisecond, Hop: true}, nil
 	}
@@ -101,6 +101,28 @@ func TestTrace(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("lacks %q:\n%s", w, out)
 		}
+	}
+
+	// Transact's carrier NAT (hop 4) refuses the echo with TTL 11; TTL 12
+	// reaches 8.8.8.8: reached at 12, hop 11 marked as hop 4 refusing
+	hops := []string{"192.168.178.254", "100.66.0.1", "209.240.35.67", "100.100.100.7", "209.240.45.206",
+		"172.22.126.254", "209.240.45.218", "172.31.13.13", "142.250.63.91", "216.239.43.155", "refuse 100.100.100.7"}
+	p = &fakePath{hops: hops, target: "8.8.8.8"}
+	r, _ = RunTrace(context.Background(), "8.8.8.8", TraceOptions{Open: p.open, Names: names})
+	if !r.Reached || len(r.Hops) != 12 || r.Hops[10].SameAs != 4 || r.Hops[10].Why != "administratively prohibited" || !r.Hops[11].Reached {
+		t.Fatalf("carrier NAT: %d hops %+v", len(r.Hops), r.Hops[10])
+	}
+	b.Reset()
+	RenderTrace(&b, r, false)
+	if !strings.Contains(b.String(), "administratively prohibited: hop 4's router refused this echo") || !strings.Contains(b.String(), "12  8.8.8.8") {
+		t.Errorf("%s", b.String())
+	}
+
+	// an unreachable with nothing after it ends the trace
+	p = &fakePath{hops: append([]string{"192.168.178.1", "refuse 10.0.0.1"}, make([]string, 28)...), target: ""}
+	r, _ = RunTrace(context.Background(), "203.0.113.9", TraceOptions{Open: p.open, Names: names})
+	if r.Reached || len(r.Hops) != 2 || !r.Hops[1].Unreach || r.Status != DPTFail {
+		t.Errorf("unreachable end: %+v", r)
 	}
 
 	// nothing beyond hop 2: one line, and not reached

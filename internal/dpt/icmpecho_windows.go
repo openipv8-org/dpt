@@ -40,6 +40,21 @@ const (
 	icmpReplyExtra  = 64
 )
 
+// icmpStatusCode is the ICMP code an unreachable status stands for.
+func icmpStatusCode(st uint32) int {
+	switch st {
+	case ipDestNetUnr:
+		return 0
+	case ipDestHostUnr:
+		return 1
+	case ipDestProtUnr:
+		return 2
+	case ipDestPortUnr:
+		return 3
+	}
+	return 0
+}
+
 // icmpStatusKind: what a status from a router (not the address) says.
 func icmpStatusKind(st uint32) int {
 	switch st {
@@ -148,7 +163,7 @@ func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) 
 			if k := icmpStatusKind(st); k != icmpNotOurs && ttl > 0 {
 				// IPV6_ADDRESS_EX: port(2) flowinfo(4) address(16)
 				return EchoReply{Seq: seq, From: net.IP(append([]byte(nil), reply[6:22]...)).String(), RTT: rtt, TTL: -1,
-					Hop: k == icmpExceeded, Unreachable: k == icmpUnreach}, nil
+					Hop: k == icmpExceeded, Unreachable: k == icmpUnreach, Code: icmpStatusCode(st)}, nil
 			}
 			if st == ipReqTimedOut {
 				return EchoReply{Seq: seq}, ErrEchoTimeout
@@ -166,9 +181,13 @@ func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) 
 			a := r.Address // in network order as stored
 			from := net.IPv4(byte(a), byte(a>>8), byte(a>>16), byte(a>>24)).String()
 			return EchoReply{Seq: seq, From: from, RTT: rtt, TTL: int(r.Options.TTL),
-				Hop: k == icmpExceeded, Unreachable: k == icmpUnreach}, nil
+				Hop: k == icmpExceeded, Unreachable: k == icmpUnreach, Code: icmpStatusCode(r.Status)}, nil
 		}
 		return EchoReply{Seq: seq}, fmt.Errorf("echo status %d", r.Status)
 	}
 	return EchoReply{Seq: seq, From: c.ip.String(), RTT: rtt, TTL: int(r.Options.TTL), Size: 8 + int(r.DataSize)}, nil
+}
+
+func (c *ICMPConn) echoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	return c.echoTTLsEach(probes, timeout)
 }

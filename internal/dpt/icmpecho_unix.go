@@ -61,20 +61,8 @@ func (c *ICMPConn) sockaddr() unix.Sockaddr {
 
 func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) {
 	req := icmpEchoRequest(c.v6, c.id, seq, c.payload)
-	if ttl > 0 && ttl != c.sys.ttl {
-		var err error
-		if c.v6 {
-			err = unix.SetsockoptInt(c.sys.fd, unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS, ttl)
-		} else {
-			err = unix.SetsockoptInt(c.sys.fd, unix.IPPROTO_IP, unix.IP_TTL, ttl)
-		}
-		if err != nil {
-			return EchoReply{Seq: seq}, err
-		}
-		if c.sys.ttl == 0 && !c.sys.raw {
-			icmpRecvErr(c.sys.fd, c.v6) // Linux: the routers' errors, on the error queue
-		}
-		c.sys.ttl = ttl
+	if err := c.setTTL(ttl); err != nil {
+		return EchoReply{Seq: seq}, err
 	}
 	start := time.Now()
 	if err := unix.Sendto(c.sys.fd, req, 0, c.sockaddr()); err != nil {
@@ -99,8 +87,12 @@ func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) 
 			continue
 		}
 		if pfd[0].Revents&unix.POLLERR != 0 {
-			if from, kind, ok := icmpErrQueue(c.sys.fd, c.v6, seq); ok {
-				return EchoReply{Seq: seq, From: from, RTT: time.Since(start), TTL: -1, Hop: kind == icmpExceeded, Unreachable: kind == icmpUnreach}, nil
+			if got, from, kind, code, ok := icmpErrQueue(c.sys.fd, c.v6); ok && got == seq&0xffff {
+				if c.v6 {
+					code = unreachCode6(code)
+				}
+				return EchoReply{Seq: seq, From: from, RTT: time.Since(start), TTL: -1, Hop: kind == icmpExceeded,
+					Unreachable: kind == icmpUnreach, Code: code}, nil
 			}
 			if pfd[0].Revents&unix.POLLIN == 0 {
 				continue
@@ -129,8 +121,12 @@ func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) 
 		if ttl > 0 {
 			// a router's word about our echo (raw sockets, macOS)
 			if kind := icmpTraceMatch(c.v6, b, seq); kind != icmpNotOurs {
+				code := int(b[1])
+				if c.v6 {
+					code = unreachCode6(code)
+				}
 				return EchoReply{Seq: seq, From: sockaddrIP(from), RTT: rtt, TTL: ttl, Size: len(b),
-					Hop: kind == icmpExceeded, Unreachable: kind == icmpUnreach}, nil
+					Hop: kind == icmpExceeded, Unreachable: kind == icmpUnreach, Code: code}, nil
 			}
 		}
 		if !icmpMatchReply(c.v6, b, seq, c.payload) {
@@ -154,6 +150,111 @@ func sockaddrIP(from unix.Sockaddr) string {
 		return net.IP(a.Addr[:]).String()
 	}
 	return ""
+}
+
+// setTTL sets the TTL the next echoes go with (0: leave it).
+func (c *ICMPConn) setTTL(ttl int) error {
+	if ttl <= 0 || ttl == c.sys.ttl {
+		return nil
+	}
+	var err error
+	if c.v6 {
+		err = unix.SetsockoptInt(c.sys.fd, unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS, ttl)
+	} else {
+		err = unix.SetsockoptInt(c.sys.fd, unix.IPPROTO_IP, unix.IP_TTL, ttl)
+	}
+	if err != nil {
+		return err
+	}
+	if c.sys.ttl == 0 && !c.sys.raw {
+		icmpRecvErr(c.sys.fd, c.v6) // Linux: the routers' errors, on the error queue
+	}
+	c.sys.ttl = ttl
+	return nil
+}
+
+// echoTTLs sends every probe on this one socket, then hears the answers
+// until each has one or timeout has passed since the last was sent.  One
+// socket is one ICMP id: a NAT on the way sees one ping, not one per hop.
+func (c *ICMPConn) echoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	res := make([]TraceResult, len(probes))
+	sent := make([]time.Time, len(probes))
+	bySeq := map[int]int{}
+	left := 0
+	for i, p := range probes {
+		res[i] = TraceResult{EchoReply: EchoReply{Seq: p.Seq}, Err: ErrEchoTimeout}
+		if err := c.setTTL(p.TTL); err != nil {
+			res[i].Err = err
+			continue
+		}
+		sent[i] = time.Now()
+		if err := unix.Sendto(c.sys.fd, icmpEchoRequest(c.v6, c.id, p.Seq, c.payload), 0, c.sockaddr()); err != nil {
+			res[i].Err = err
+			continue
+		}
+		bySeq[p.Seq&0xffff] = i
+		left++
+	}
+	answer := func(seq int, r EchoReply) {
+		i, ok := bySeq[seq]
+		if !ok || res[i].Err != ErrEchoTimeout {
+			return
+		}
+		r.Seq, r.RTT = probes[i].Seq, time.Since(sent[i])
+		res[i] = TraceResult{EchoReply: r}
+		left--
+	}
+	deadline := time.Now().Add(timeout)
+	buf := make([]byte, 1600)
+	oob := make([]byte, 128)
+	for left > 0 {
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			break
+		}
+		pfd := []unix.PollFd{{Fd: int32(c.sys.fd), Events: unix.POLLIN}}
+		if k, err := unix.Poll(pfd, max(int(wait/time.Millisecond), 1)); err != nil || k == 0 {
+			continue
+		}
+		if pfd[0].Revents&unix.POLLERR != 0 {
+			if seq, from, kind, code, ok := icmpErrQueue(c.sys.fd, c.v6); ok {
+				if c.v6 {
+					code = unreachCode6(code)
+				}
+				answer(seq, EchoReply{From: from, TTL: -1, Hop: kind == icmpExceeded, Unreachable: kind == icmpUnreach, Code: code})
+			}
+			if pfd[0].Revents&unix.POLLIN == 0 {
+				continue
+			}
+		}
+		n, _, _, from, err := unix.Recvmsg(c.sys.fd, buf, oob, unix.MSG_DONTWAIT)
+		if err != nil {
+			continue
+		}
+		b := buf[:n]
+		if !c.v6 && len(b) >= 20 && b[0]>>4 == 4 {
+			hl := int(b[0]&0x0f) * 4
+			if hl < 20 || hl > len(b) {
+				continue
+			}
+			b = b[hl:]
+		}
+		if seq, ok := icmpReplySeq(c.v6, b, c.payload); ok {
+			if icmpFromTarget(from, c.ip) {
+				answer(seq, EchoReply{From: c.ip.String(), TTL: -1, Size: len(b)})
+			}
+			continue
+		}
+		if kind, seq := icmpTraceSeq(c.v6, b); kind != icmpNotOurs {
+			code := int(b[1])
+			if c.v6 {
+				code = unreachCode6(code)
+			}
+			answer(seq, EchoReply{From: sockaddrIP(from), TTL: -1, Size: len(b), Hop: kind == icmpExceeded,
+				Unreachable: kind == icmpUnreach, Code: code})
+		}
+	}
+	return res
 }
 
 func icmpFromTarget(from unix.Sockaddr, ip net.IP) bool {

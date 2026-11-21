@@ -7,6 +7,8 @@ import (
 	"errors"
 	"math"
 	"net"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -27,6 +29,43 @@ type EchoReply struct {
 	// out (trace), not the address echoed.  Unreachable: From said the
 	// address cannot be reached.
 	Hop, Unreachable bool
+	// Code is the unreachable's ICMP code (IPv4's numbering; IPv6's is
+	// turned into it): 1 host, 3 port, 13 administratively prohibited...
+	Code int
+}
+
+// UnreachWhy says what an unreachable's code means (IPv4 numbering).
+func UnreachWhy(code int) string {
+	switch code {
+	case 0:
+		return "network unreachable"
+	case 1:
+		return "host unreachable"
+	case 2:
+		return "protocol unreachable"
+	case 3:
+		return "port unreachable"
+	case 4:
+		return "fragmentation needed"
+	case 9, 10, 13:
+		return "administratively prohibited"
+	}
+	return "unreachable (code " + strconv.Itoa(code) + ")"
+}
+
+// unreachCode6 turns an ICMPv6 destination unreachable code into IPv4's.
+func unreachCode6(c int) int {
+	switch c {
+	case 0:
+		return 0 // no route
+	case 1, 5, 6:
+		return 13 // prohibited, failed policy, reject route
+	case 3:
+		return 1 // address unreachable
+	case 4:
+		return 3 // port
+	}
+	return 100 + c
 }
 
 // ErrEchoTimeout is an echo that got no answer in time.
@@ -74,6 +113,30 @@ func (c *ICMPConn) EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, erro
 	return c.echo(seq, ttl, timeout)
 }
 
+// EchoTTLs sends the probes, each with its TTL, and gives what each got,
+// in the same order: all of them on one socket where the system allows,
+// so that a NAT on the way sees one ping and not one per hop.
+func (c *ICMPConn) EchoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	return c.echoTTLs(probes, timeout)
+}
+
+// echoTTLsEach does the probes at once, each its own blocking echo (on
+// Windows the system gives every echo the same id already).
+func (c *ICMPConn) echoTTLsEach(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	res := make([]TraceResult, len(probes))
+	var wg sync.WaitGroup
+	for i, p := range probes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := c.echo(p.Seq, p.TTL, timeout)
+			res[i] = TraceResult{EchoReply: r, Err: err}
+		}()
+	}
+	wg.Wait()
+	return res
+}
+
 // ICMP error kinds a trace hears.
 const (
 	icmpNotOurs = iota
@@ -82,11 +145,22 @@ const (
 )
 
 // icmpTraceMatch reads b (ICMP, any IP header removed): time exceeded or
-// unreachable about our echo request seq.  The error carries the start
-// of the packet it is about: its IP header, then our echo's 8 octets.
+// unreachable about our echo request seq.
 func icmpTraceMatch(v6 bool, b []byte, seq int) int {
-	if len(b) < 8 {
+	kind, got := icmpTraceSeq(v6, b)
+	if kind == icmpNotOurs || got != seq&0xffff {
 		return icmpNotOurs
+	}
+	return kind
+}
+
+// icmpTraceSeq reads b (ICMP, any IP header removed): time exceeded or
+// unreachable about an echo request, and that request's sequence number.
+// The error carries the start of the packet it is about: its IP header,
+// then the echo's 8 octets.
+func icmpTraceSeq(v6 bool, b []byte) (int, int) {
+	if len(b) < 8 {
+		return icmpNotOurs, 0
 	}
 	kind := icmpNotOurs
 	switch {
@@ -95,29 +169,51 @@ func icmpTraceMatch(v6 bool, b []byte, seq int) int {
 	case !v6 && b[0] == 3, v6 && b[0] == 1:
 		kind = icmpUnreach
 	default:
-		return icmpNotOurs
+		return icmpNotOurs, 0
 	}
 	in := b[8:]
 	req := byte(8)
 	if v6 {
 		if len(in) < 40+8 || in[0]>>4 != 6 || in[6] != 58 {
-			return icmpNotOurs
+			return icmpNotOurs, 0
 		}
 		in, req = in[40:], 128
 	} else {
 		if len(in) < 20 || in[0]>>4 != 4 || in[9] != 1 {
-			return icmpNotOurs
+			return icmpNotOurs, 0
 		}
 		hl := int(in[0]&0x0f) * 4
 		if hl < 20 || len(in) < hl+8 {
-			return icmpNotOurs
+			return icmpNotOurs, 0
 		}
 		in = in[hl:]
 	}
-	if in[0] != req || int(binary.BigEndian.Uint16(in[6:])) != seq&0xffff {
-		return icmpNotOurs
+	if in[0] != req {
+		return icmpNotOurs, 0
 	}
-	return kind
+	return kind, int(binary.BigEndian.Uint16(in[6:]))
+}
+
+// icmpReplySeq: b (ICMP, any IP header removed) is an echo reply
+// carrying our payload; its sequence number.
+func icmpReplySeq(v6 bool, b []byte, payload []byte) (int, bool) {
+	want := byte(0)
+	if v6 {
+		want = 129
+	}
+	if len(b) < 8+len(payload) || b[0] != want || b[1] != 0 || string(b[8:8+len(payload)]) != string(payload) {
+		return 0, false
+	}
+	return int(binary.BigEndian.Uint16(b[6:])), true
+}
+
+// TraceProbe is one echo of a trace: its sequence number and TTL.
+type TraceProbe struct{ Seq, TTL int }
+
+// TraceResult is what one probe got: Err is ErrEchoTimeout when nothing.
+type TraceResult struct {
+	EchoReply
+	Err error
 }
 
 // icmpEchoRequest is an echo request: type 8 (IPv4) or 128 (IPv6).  The

@@ -24,22 +24,24 @@ func icmpRecvErr(fd int, v6 bool) {
 	}
 }
 
-// icmpErrQueue reads one error from the queue: the router that sent it
-// and what it said, when it is about our echo seq.
-func icmpErrQueue(fd int, v6 bool, seq int) (string, int, bool) {
+// icmpErrQueue reads one error from the queue: the sequence number of
+// the echo it is about, the router that sent it, what it said and its
+// code.
+func icmpErrQueue(fd int, v6 bool) (int, string, int, int, bool) {
 	buf := make([]byte, 1600)
 	oob := make([]byte, 512)
 	n, oobn, _, _, err := unix.Recvmsg(fd, buf, oob, unix.MSG_ERRQUEUE|unix.MSG_DONTWAIT)
 	if err != nil || n < 8 {
-		return "", 0, false
+		return 0, "", 0, 0, false
 	}
 	// what the error is about: our echo request as sent
-	if req := byte(8); v6 && buf[0] != 128 || !v6 && buf[0] != req || int(binary.BigEndian.Uint16(buf[6:])) != seq&0xffff {
-		return "", 0, false
+	if v6 && buf[0] != 128 || !v6 && buf[0] != 8 {
+		return 0, "", 0, 0, false
 	}
+	seq := int(binary.BigEndian.Uint16(buf[6:]))
 	msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
 	if err != nil {
-		return "", 0, false
+		return 0, "", 0, 0, false
 	}
 	for _, m := range msgs {
 		v4err := m.Header.Level == unix.IPPROTO_IP && m.Header.Type == unix.IP_RECVERR
@@ -49,7 +51,7 @@ func icmpErrQueue(fd int, v6 bool, seq int) (string, int, bool) {
 		}
 		// struct sock_extended_err: errno(4) origin(1) type(1) code(1)
 		// pad(1) info(4) data(4), then the offender's sockaddr
-		origin, typ := m.Data[4], m.Data[5]
+		origin, typ, code := m.Data[4], m.Data[5], int(m.Data[6])
 		kind := 0
 		switch {
 		case origin == 2 && typ == 11, origin == 3 && typ == 3:
@@ -62,10 +64,10 @@ func icmpErrQueue(fd int, v6 bool, seq int) (string, int, bool) {
 		sa := m.Data[16:]
 		switch {
 		case !v6 && len(sa) >= 8:
-			return net.IP(sa[4:8]).String(), kind, true
+			return seq, net.IP(sa[4:8]).String(), kind, code, true
 		case v6 && len(sa) >= 24:
-			return net.IP(sa[8:24]).String(), kind, true
+			return seq, net.IP(sa[8:24]).String(), kind, code, true
 		}
 	}
-	return "", 0, false
+	return 0, "", 0, 0, false
 }

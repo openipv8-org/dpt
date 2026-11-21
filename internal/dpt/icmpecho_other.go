@@ -18,3 +18,7 @@ func (c *ICMPConn) close() error { return nil }
 func (c *ICMPConn) echo(seq, ttl int, timeout time.Duration) (EchoReply, error) {
 	return EchoReply{Seq: seq}, errors.New("not supported")
 }
+
+func (c *ICMPConn) echoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult {
+	return c.echoTTLsEach(probes, timeout)
+}

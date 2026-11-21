@@ -31,9 +31,9 @@ type TraceOptions struct {
 	Open func(ip net.IP) (TraceEchoer, error)
 }
 
-// TraceEchoer sends echoes with a TTL.
+// TraceEchoer sends echoes with a TTL, all at once.
 type TraceEchoer interface {
-	EchoTTL(seq, ttl int, timeout time.Duration) (EchoReply, error)
+	EchoTTLs(probes []TraceProbe, timeout time.Duration) []TraceResult
 	Close() error
 }
 
@@ -47,6 +47,10 @@ type TraceHop struct {
 	Lost    int      `json:"lost"`
 	Reached bool     `json:"reached,omitempty"` // the address itself answered
 	Unreach bool     `json:"unreachable,omitempty"`
+	Why     string   `json:"unreachable_why,omitempty"` // administratively prohibited, host unreachable...
+	// SameAs: the router that said unreachable is the one at that
+	// earlier hop (0: none), refusing this echo, not a hop of its own
+	SameAs int `json:"same_as_hop,omitempty"`
 }
 
 // TraceReport is a trace.
@@ -94,44 +98,30 @@ func RunTrace(ctx context.Context, target string, o TraceOptions) (*TraceReport,
 		rep.Target.Addresses = append(rep.Target.Addresses, a.String())
 	}
 	start := time.Now()
+	// on this machine's own network there is no router between: one hop,
+	// and time for the address lookup (ARP) to give up, about 3 s, when
+	// nothing is there
+	if onLink(ip) {
+		o.MaxHops = 1
+		o.Timeout = max(o.Timeout, 3500*time.Millisecond)
+		rep.MaxHops = 1
+		rep.Note = "on this machine's own network: no routers in between"
+	}
 	hops := make([]TraceHop, o.MaxHops)
-	conns := make([]TraceEchoer, o.MaxHops)
-	for i := range conns {
-		c, err := o.Open(ip)
-		if err != nil {
-			for _, x := range conns[:i] {
-				x.Close()
-			}
-			return nil, err
-		}
-		conns[i] = c
+	for i := range hops {
 		hops[i] = TraceHop{TTL: i + 1}
 	}
-	defer func() {
-		for _, c := range conns {
-			c.Close()
-		}
-	}()
-	// a round asks every hop once, all at once.  Some NATs (VirtualBox's)
-	// answer only one of many echoes to the same address at the same
-	// time: when a whole round hears nothing, the hops are asked one at a
-	// time instead, nearest first, as far as the address.
-	var mu sync.Mutex
-	done := 0
-	oneAtATime := false
-	probe := func(i, round int) {
-		h := &hops[i]
-		c := conns[i]
-		if oneAtATime {
-			c = conns[0] // one socket: such a NAT gives every answer to the first
-		}
-		r, err := c.EchoTTL(round*o.MaxHops+h.TTL, h.TTL, o.Timeout) // each its own sequence number
-		mu.Lock()
-		defer mu.Unlock()
+	// one socket for the whole trace: a NAT on the way (a carrier's
+	// shared one) sees one ping, not one per hop, and does not refuse the
+	// many
+	c, err := o.Open(ip)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	take := func(h *TraceHop, r TraceResult) {
 		h.Sent++
-		done++
-		o.Live.Set("trace", fmt.Sprintf("trace to %s: %d echoes", ip, done))
-		if err != nil {
+		if r.Err != nil {
 			h.Lost++
 			return
 		}
@@ -141,33 +131,38 @@ func RunTrace(ctx context.Context, target string, o TraceOptions) (*TraceReport,
 		}
 		switch {
 		case r.Unreachable:
-			h.Unreach = true
+			h.Unreach, h.Why = true, UnreachWhy(r.Code)
 		case !r.Hop:
 			h.Reached = true
 		}
 	}
+	// a round asks every hop once, all at once, each echo with its own
+	// sequence number.  When a whole round hears nothing (a NAT that
+	// answers one echo at a time), the hops are asked one at a time
+	// instead, nearest first, as far as the address.
+	oneAtATime := false
 	for round := 0; round < o.Probes && ctx.Err() == nil; round++ {
+		o.Live.Set("trace", fmt.Sprintf("trace to %s: round %d of %d", ip, round+1, o.Probes))
 		if oneAtATime {
 			for i := range hops {
 				if ctx.Err() != nil {
 					break
 				}
-				probe(i, round)
+				r := c.EchoTTLs([]TraceProbe{{Seq: round*o.MaxHops + hops[i].TTL, TTL: hops[i].TTL}}, o.Timeout)
+				take(&hops[i], r[0])
 				if hops[i].Reached || hops[i].Unreach {
 					break
 				}
 			}
 			continue
 		}
-		var wg sync.WaitGroup
-		for i := range hops {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				probe(i, round)
-			}()
+		probes := make([]TraceProbe, len(hops))
+		for i, h := range hops {
+			probes[i] = TraceProbe{Seq: round*o.MaxHops + h.TTL, TTL: h.TTL}
 		}
-		wg.Wait()
+		for i, r := range c.EchoTTLs(probes, o.Timeout) {
+			take(&hops[i], r)
+		}
 		if round == 0 && !anyAnswer(hops) {
 			oneAtATime = true
 			rep.OneAtATime = true
@@ -177,17 +172,41 @@ func RunTrace(ctx context.Context, target string, o TraceOptions) (*TraceReport,
 			round--
 		}
 	}
-	// the path ends at the first hop the address (or an unreachable)
-	// answered from; a later TTL only reaches it again
+	// the path ends at the first hop the address answered from (a later
+	// TTL only reaches it again).  An unreachable ends it only when no
+	// later hop reached the address: a carrier's NAT may refuse one of
+	// many echoes at once, and the others still get through.
 	end := len(hops)
 	for i, h := range hops {
-		if h.Reached || h.Unreach {
+		if h.Reached {
 			end = i + 1
-			rep.Reached = h.Reached
+			rep.Reached = true
 			break
 		}
 	}
+	if !rep.Reached {
+		for i, h := range hops {
+			if h.Unreach {
+				end = i + 1
+				break
+			}
+		}
+	}
 	rep.Hops = hops[:end]
+	// an unreachable from a router seen at an earlier hop is that router
+	// refusing this echo
+	for i := range rep.Hops {
+		h := &rep.Hops[i]
+		if !h.Unreach || len(h.From) == 0 {
+			continue
+		}
+		for j := 0; j < i; j++ {
+			if containsStr(rep.Hops[j].From, h.From[0]) {
+				h.SameAs = rep.Hops[j].TTL
+				break
+			}
+		}
+	}
 	// trailing silent hops past the last answer are one line, not many
 	if !rep.Reached {
 		last := -1
@@ -319,7 +338,18 @@ func RenderTrace(w io.Writer, r *TraceReport, color bool) {
 			line += "   " + o.yellow(strconv.Itoa(h.Lost)+"/"+strconv.Itoa(h.Sent)+" lost")
 		}
 		if h.Unreach {
-			line += "   " + o.red("unreachable")
+			why := h.Why
+			if why == "" {
+				why = "unreachable"
+			}
+			if h.SameAs > 0 {
+				why += fmt.Sprintf(": hop %d's router refused this echo", h.SameAs)
+			}
+			if h.SameAs > 0 && r.Reached {
+				line += "   " + o.yellow(why)
+			} else {
+				line += "   " + o.red(why)
+			}
 		}
 		o.line(sec, line)
 		if len(h.From) > 1 {
