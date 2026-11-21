@@ -29,7 +29,8 @@ func (s *Shell) serverName() string {
 func (s *Shell) smtp(args []string) {
 	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
 	host := s.hostName()
-	if len(args) == 0 && s.lr != nil {
+	// smtp alone, or smtp prompt: the questions
+	if (len(args) == 0 || len(args) == 1 && strings.EqualFold(args[0], "prompt")) && s.lr != nil {
 		// blank is the host set (host, or a command given one); at
 		// first, nothing
 		a, err := dpt.SMTPAsk(s.target, s.lr.Ask, s.lr.ReadSecret, func(l string) { s.printf("%s\n", l) })
@@ -73,7 +74,6 @@ func (s *Shell) smtp(args []string) {
 }
 
 func (s *Shell) runSMTP(host, user, pass, from, to string) {
-	s.target = host
 	ctx, cancel := s.ctx()
 	defer cancel()
 	p := dpt.NewSMTPPrinter(s.out, s.Color, false)
@@ -92,6 +92,7 @@ func (s *Shell) runSMTP(host, user, pass, from, to string) {
 		s.printf("*** %v\n", err)
 		return
 	}
+	s.target = host // it resolved: it is the host now
 	p.Summary(r)
 	s.printf("\n")
 }
@@ -237,7 +238,6 @@ func (s *Shell) connect(args []string) {
 		return
 	}
 	o.Port = port
-	s.target = host
 	ctx, cancel := s.ctx()
 	defer cancel()
 	l := s.live()
@@ -248,6 +248,7 @@ func (s *Shell) connect(args []string) {
 		s.printf("*** %v\n", err)
 		return
 	}
+	s.target = host // it resolved: it is the host now
 	dpt.RenderConnect(s.out, r, s.Color)
 	if conn == nil {
 		s.printf("\n")

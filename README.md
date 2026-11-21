@@ -113,7 +113,7 @@ IP authentication, an office relay) or one taking mail for its own
 addresses. It goes on the port that keeps it safest: TLS with a trusted
 certificate first, then 587, 465, 25.
 
-`dpt smtp` alone (and `smtp` in the shell) asks a line at a time: the
+`dpt smtp` or `dpt smtp prompt` (and the same in the shell) asks a line at a time: the
 server, the username (Enter: no login), the password, who the test
 message is from (Enter: no message), and who it is to.
 

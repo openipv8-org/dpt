@@ -337,4 +337,11 @@ func TestHostSetting(t *testing.T) {
 	if s.target != "" || s.prompt() != server || !strings.Contains(out.String(), "host cleared") {
 		t.Errorf("after clear: %q %q", s.target, s.prompt())
 	}
+	// a host that does not resolve does not become the host
+	s.Do("smtp no-such-host.invalid")
+	s.Do("connect no-such-host.invalid 25")
+	s.Do("ports no-such-host.invalid")
+	if s.target != "" {
+		t.Errorf("an unresolved host became the host: %q", s.target)
+	}
 }

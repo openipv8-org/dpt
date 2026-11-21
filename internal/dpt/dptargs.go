@@ -111,7 +111,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            ports 25, 465 and 587: greeting, STARTTLS or TLS, the certificate, AUTH;\n")
 	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given);\n")
 	fmt.Fprintf(&b, "                            to: then send a test message (from: the user, when it is an address);\n")
-	fmt.Fprintf(&b, "                            smtp alone asks for each of these, a line at a time\n")
+	fmt.Fprintf(&b, "                            smtp alone (or smtp prompt) asks for each of these, a line at a time\n")
 	fmt.Fprintf(&b, "       %s sweep [ports] [<network>]\n", prog)
 	fmt.Fprintf(&b, "                            ping every address on this network (or <network>, 10.0.0.0/24; an address: its /24),\n")
 	fmt.Fprintf(&b, "                            25 at a time; ports: then the common ports of each that answers\n")
@@ -324,7 +324,7 @@ func (c *DPTCommand) words(pos []string) error {
 	}
 	switch c.Mode {
 	case "smtp":
-		if len(rest) == 0 {
+		if len(rest) == 0 || len(rest) == 1 && strings.EqualFold(rest[0], "prompt") {
 			return nil // asked for, a line at a time, at a terminal
 		}
 		if slices.Contains(dptModes, strings.ToLower(rest[0])) {
