@@ -4,7 +4,7 @@
 //
 //	dpt <address|dnsname> [-tdp] [options]   time, DNS and ping tests of the address
 //	dpt dhcp [-td] [options]                 every DHCP server on the segment and its offer
-//	dpt smtp <host> [test <user> [<pw>]]     SMTP ports 25, 465, 587 and a login
+//	dpt smtp <host> [test <user> [<pw>]] [from <a>] [to <a>]   SMTP ports 25, 465, 587, a login, a test message
 //	dpt sweep [ports] [<network>]            live addresses (and their open ports)
 //	dpt ports <host>                         the common TCP ports of host
 //	dpt outside-ip                           the address the internet sees
@@ -140,6 +140,7 @@ func run(args []string) int {
 		cancel() // the shell handles Ctrl-C per command
 		sh := shell.New(os.Stdout, sysdns.Servers(), c.Opts)
 		sh.Color = color
+		sh.Agent = "dpt " + version
 		sh.NewLive = live
 		if err := sh.Run(os.Stdin); err != nil {
 			fmt.Fprintln(os.Stderr, "dpt:", err)
@@ -379,7 +380,8 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 	defer l.Stop()
 	switch c.Mode {
 	case "smtp":
-		o := dpt.SMTPOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family, User: c.SMTPUser, Password: c.SMTPPassword}
+		o := dpt.SMTPOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family, User: c.SMTPUser, Password: c.SMTPPassword,
+			From: c.SMTPFrom, To: c.SMTPTo, Agent: "dpt " + version}
 		if o.User != "" && o.Password == "" {
 			pw, err := readPassword(c.SMTPUser)
 			if err != nil {
@@ -394,6 +396,7 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 			o.OnTarget = func(r *dpt.SMTPReport) { l.Out(func() { p.Target(r) }) }
 			o.OnPort = func(x *dpt.SMTPPort) { l.Out(func() { p.Port(x) }) }
 			o.OnLogin = func(x *dpt.SMTPLogin) { l.Out(func() { p.Login(x) }) }
+			o.OnSend = func(x *dpt.SMTPSend) { l.Out(func() { p.Send(x) }) }
 		}
 		r, err := dpt.RunSMTP(ctx, c.Target, o)
 		l.Stop()

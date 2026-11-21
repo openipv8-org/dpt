@@ -21,27 +21,25 @@ func (s *Shell) serverName() string {
 	return s.server
 }
 
-// smtp [host] [test <user> [<password>]], or smtp test <user> [<password>]
-// on the last smtp host.
+// smtp [host] [test <user> [<password>]] [from <address>] [to <address>];
+// with no host, the last smtp host (or the current server).
 func (s *Shell) smtp(args []string) {
-	const use = "usage: smtp [host] [test <user> [<password>]]\n"
+	const use = "usage: smtp [host] [test <user> [<password>]] [from <address>] [to <address>]\n"
 	host := s.smtpHost
 	if host == "" {
 		host = s.serverName()
 	}
-	if len(args) > 0 && !strings.EqualFold(args[0], "test") {
+	if len(args) > 0 && !strings.EqualFold(args[0], "test") && !strings.EqualFold(args[0], "from") && !strings.EqualFold(args[0], "to") {
 		host, args = args[0], args[1:]
 	}
-	user, pass := "", ""
-	if len(args) > 0 {
-		if !strings.EqualFold(args[0], "test") || len(args) < 2 || len(args) > 3 {
+	user, pass, from, to, err := dpt.ParseSMTPWords(args)
+	if err != nil {
+		if err.Error() == dpt.SMTPUse {
 			s.printf(use)
-			return
+		} else {
+			s.printf("*** %v\n", err)
 		}
-		user = args[1]
-		if len(args) == 3 {
-			pass = args[2]
-		}
+		return
 	}
 	if host == "" {
 		s.printf(use)
@@ -64,13 +62,14 @@ func (s *Shell) smtp(args []string) {
 	defer cancel()
 	p := dpt.NewSMTPPrinter(s.out, s.Color, false)
 	l := s.live()
-	o := dpt.SMTPOptions{Resolver: s.opts().Resolver, User: user, Password: pass, Live: l, Family: s.DPT.Family}
+	o := dpt.SMTPOptions{Resolver: s.opts().Resolver, User: user, Password: pass, From: from, To: to, Agent: s.Agent, Live: l, Family: s.DPT.Family}
 	if s.DPT.Timeout > 0 {
 		o.Timeout = s.DPT.Timeout
 	}
 	o.OnTarget = func(r *dpt.SMTPReport) { l.Out(func() { p.Target(r) }) }
 	o.OnPort = func(x *dpt.SMTPPort) { l.Out(func() { p.Port(x) }) }
 	o.OnLogin = func(x *dpt.SMTPLogin) { l.Out(func() { p.Login(x) }) }
+	o.OnSend = func(x *dpt.SMTPSend) { l.Out(func() { p.Send(x) }) }
 	r, err := dpt.RunSMTP(ctx, host, o)
 	l.Stop()
 	if err != nil {

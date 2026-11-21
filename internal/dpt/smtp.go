@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/textproto"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -54,12 +55,17 @@ type SMTPOptions struct {
 	// User and Password, when User is set, log in after the ports are
 	// tested.  The password is in no report.
 	User, Password string
-	Live           *Live
+	// To, when set, is sent a test message from From (after the login,
+	// on its connection; with no User, on port 25 as any server would).
+	// Agent names the sender in it (dpt v0.2.1).
+	From, To, Agent string
+	Live            *Live
 	// OnTarget gets the target once resolved; OnPort each port when it
 	// is done, in the order of Ports; OnLogin the login.
 	OnTarget func(r *SMTPReport)
 	OnPort   func(p *SMTPPort)
 	OnLogin  func(l *SMTPLogin)
+	OnSend   func(m *SMTPSend)
 	// Ports; nil: SMTPPorts.
 	Ports []SMTPPortSpec
 	// Roots the certificates are checked against; nil: the system's.
@@ -121,17 +127,34 @@ type SMTPLogin struct {
 	Status    string `json:"status"`
 }
 
+// SMTPSend is the test message.
+type SMTPSend struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Subject string `json:"subject"`
+	Port    int    `json:"port,omitempty"`
+	Step    string `json:"step,omitempty"` // MAIL, RCPT or DATA: where it was refused
+	Reply   string `json:"reply,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Status  string `json:"status"`
+}
+
 // SMTPReport is an smtp run.
 type SMTPReport struct {
 	Target  DPTTarget  `json:"target"`
 	MX      []string   `json:"mx,omitempty"` // the name's MX hosts, when it has any
 	Ports   []SMTPPort `json:"ports"`
 	Login   *SMTPLogin `json:"login,omitempty"`
+	Send    *SMTPSend  `json:"send,omitempty"`
 	Started time.Time  `json:"started"`
 }
 
-// Failed: a port failed, the login failed, or no port took mail.
+// Failed: a port failed, the login or the test message failed, or no
+// port took mail.
 func (r *SMTPReport) Failed() bool {
+	if r.Send != nil && r.Send.Status == DPTFail {
+		return true
+	}
 	any := false
 	for _, p := range r.Ports {
 		if p.Status == DPTFail {
@@ -193,13 +216,191 @@ func RunSMTP(ctx context.Context, target string, o SMTPOptions) (*SMTPReport, er
 			o.OnPort(&rep.Ports[i])
 		}
 	}
-	if o.User != "" && ctx.Err() == nil {
-		rep.Login = smtpLogin(ctx, ip, name, rep.Ports, &o)
+	var send func(c *smtpConn, port int)
+	if o.To != "" {
+		send = func(c *smtpConn, port int) { rep.Send = smtpSend(c, port, &o) }
+	}
+	switch {
+	case ctx.Err() != nil:
+	case o.User != "":
+		rep.Login = smtpLogin(ctx, ip, name, rep.Ports, &o, send)
 		if o.OnLogin != nil {
 			o.OnLogin(rep.Login)
 		}
+		if o.To != "" && rep.Send == nil {
+			rep.Send = &SMTPSend{From: Safe(o.From), To: Safe(o.To), Status: DPTFail, Error: "not sent: the login failed"}
+		}
+	case send != nil:
+		// no login: port 25, as a server delivering to this one would
+		rep.Send = &SMTPSend{From: Safe(o.From), To: Safe(o.To), Port: 25, Status: DPTFail, Error: "not sent: port 25 does not take mail"}
+		for _, spec := range o.Ports {
+			if spec.Port != 25 {
+				continue
+			}
+			var p SMTPPort
+			if c := smtpOpen(ctx, ip, name, spec, &o, &p, false); c != nil {
+				send(c, 25)
+				c.quit()
+			}
+		}
+	}
+	if rep.Send != nil && o.OnSend != nil {
+		o.OnSend(rep.Send)
 	}
 	return rep, nil
+}
+
+// smtpSend sends the test message on c: MAIL, RCPT, DATA.
+func smtpSend(c *smtpConn, port int, o *SMTPOptions) *SMTPSend {
+	from := o.From
+	if from == "" {
+		from = o.User
+	}
+	ip := "this machine"
+	if a, ok := c.raw.LocalAddr().(*net.TCPAddr); ok {
+		ip = a.IP.String()
+	}
+	m := &SMTPSend{From: Safe(from), To: Safe(o.To), Port: port, Status: DPTFail,
+		Subject: "test from dpt at " + ip}
+	o.Live.Set("send", "sending the test message to "+m.To)
+	defer o.Live.Drop("send")
+	step := func(name string, want int, format string, args ...any) bool {
+		code, msg, err := c.cmd(format, args...)
+		if err != nil {
+			m.Step, m.Error = name, smtpErr(err, c.timeout)
+			return false
+		}
+		m.Reply = smtpReply(code, msg)
+		if code != want {
+			m.Step, m.Error = name, name+" refused"
+			return false
+		}
+		return true
+	}
+	if !step("MAIL", 250, "MAIL FROM:<%s>", from) || !step("RCPT", 250, "RCPT TO:<%s>", o.To) && !acceptedRcpt(m) ||
+		!step("DATA", 354, "DATA") {
+		return m
+	}
+	host, _ := os.Hostname()
+	agent := o.Agent
+	if agent == "" {
+		agent = "dpt"
+	}
+	now := time.Now()
+	body := strings.Join([]string{
+		"From: <" + from + ">",
+		"To: <" + o.To + ">",
+		"Subject: " + m.Subject,
+		"Date: " + now.Format(time.RFC1123Z),
+		fmt.Sprintf("Message-ID: <dpt.%d@%s>", now.UnixNano(), mailDomain(from)),
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"This is a test message sent by " + agent + ".",
+		"",
+		"  from      " + Safe(host) + " (" + ip + ")",
+		"  through   " + c.server + fmt.Sprintf(" port %d", port),
+		"  as        " + Safe(o.User),
+		"  at        " + now.Format("2006-01-02 15:04:05 MST"),
+		"",
+		"If it reached you, sending through this server works.",
+	}, "\r\n")
+	if o.User == "" {
+		body = strings.Replace(body, "  as        \r\n", "  as        (no login)\r\n", 1)
+	}
+	c.raw.SetDeadline(time.Now().Add(c.timeout))
+	w := c.tp.DotWriter()
+	_, err := w.Write([]byte(body + "\r\n"))
+	if err == nil {
+		err = w.Close()
+	}
+	if err != nil {
+		m.Step, m.Error = "DATA", smtpErr(err, c.timeout)
+		return m
+	}
+	code, msg, err := c.read()
+	if err != nil {
+		m.Step, m.Error = "DATA", smtpErr(err, c.timeout)
+		return m
+	}
+	m.Reply = smtpReply(code, msg)
+	if code != 250 {
+		m.Step, m.Error = "DATA", "the message was refused"
+		return m
+	}
+	m.Status = DPTOK
+	return m
+}
+
+// mailDomain is the domain of an address, for a Message-ID.
+func mailDomain(addr string) string {
+	if _, d, ok := strings.Cut(addr, "@"); ok && d != "" && !strings.ContainsAny(d, "<> \r\n") {
+		return d
+	}
+	return "dpt.invalid"
+}
+
+// acceptedRcpt: 251 (will forward) is a yes too.
+func acceptedRcpt(m *SMTPSend) bool {
+	if strings.HasPrefix(m.Reply, "251") {
+		m.Step, m.Error = "", ""
+		return true
+	}
+	return false
+}
+
+// SMTPUse is the smtp command's words.
+const SMTPUse = "smtp <host> [test <user> [<password>]] [from <address>] [to <address>]"
+
+// ParseSMTPWords reads what follows the host: [test <user>
+// [<password>]] [from <address>] [to <address>].  A from with no to is
+// an error; from defaults to the user when that is an address.
+func ParseSMTPWords(w []string) (user, pass, from, to string, err error) {
+	kw := func(s string) bool {
+		return strings.EqualFold(s, "test") || strings.EqualFold(s, "from") || strings.EqualFold(s, "to")
+	}
+	for len(w) > 0 {
+		k := strings.ToLower(w[0])
+		if len(w) < 2 || kw(w[1]) {
+			return "", "", "", "", errors.New(SMTPUse)
+		}
+		switch {
+		case k == "test" && user == "":
+			user, w = w[1], w[2:]
+			if len(w) > 0 && !kw(w[0]) {
+				pass, w = w[0], w[1:]
+			}
+		case k == "from" && from == "":
+			from, w = w[1], w[2:]
+		case k == "to" && to == "":
+			to, w = w[1], w[2:]
+		default:
+			return "", "", "", "", errors.New(SMTPUse)
+		}
+	}
+	for _, a := range []string{from, to} {
+		if a != "" && !MailAddr(a) {
+			return "", "", "", "", fmt.Errorf("%q is not a mail address (name@domain)", Printable(a))
+		}
+	}
+	if to == "" && from != "" {
+		return "", "", "", "", errors.New("from goes with to: the address the test message is sent to")
+	}
+	if to != "" && from == "" {
+		if !MailAddr(user) {
+			return "", "", "", "", errors.New("give from <address>: the user is not a mail address")
+		}
+		from = user
+	}
+	return user, pass, from, to, nil
+}
+
+// MailAddr: s is name@domain with nothing that could break a header or
+// a command.
+func MailAddr(s string) bool {
+	l, d, ok := strings.Cut(s, "@")
+	return ok && l != "" && strings.Contains(d, ".") && !strings.ContainsAny(s, "<>()[],;: \t\r\n\"\\") &&
+		strings.Count(s, "@") == 1 && len(s) <= 254
 }
 
 // smtpConn is one SMTP session.
@@ -208,6 +409,7 @@ type smtpConn struct {
 	tp      *textproto.Conn
 	timeout time.Duration
 	stop    func() bool
+	server  string // the name typed, for the test message
 }
 
 // cmd sends a command and reads the reply (any code).
@@ -304,7 +506,7 @@ func smtpOpen(ctx context.Context, ip, name string, spec SMTPPortSpec, o *SMTPOp
 		return fail(s)
 	}
 	p.Connect = ms(time.Since(start))
-	c := &smtpConn{raw: raw, timeout: o.Timeout, stop: context.AfterFunc(ctx, func() { raw.Close() })}
+	c := &smtpConn{raw: raw, timeout: o.Timeout, stop: context.AfterFunc(ctx, func() { raw.Close() }), server: Safe(name)}
 	c.tp = textproto.NewConn(raw)
 	fail = func(s string) *smtpConn {
 		c.close()
@@ -516,7 +718,7 @@ func smtpTier(p SMTPPort) (int, string) {
 // with a trusted certificate, else TLS with one not trusted, else in the
 // clear when that is all the server works with; among equals 587, 465,
 // then 25.
-func smtpLogin(ctx context.Context, ip, name string, ports []SMTPPort, o *SMTPOptions) *SMTPLogin {
+func smtpLogin(ctx context.Context, ip, name string, ports []SMTPPort, o *SMTPOptions, send func(c *smtpConn, port int)) *SMTPLogin {
 	l := &SMTPLogin{User: Safe(o.User), Status: DPTFail}
 	var use *SMTPPort
 	best := -1
@@ -578,6 +780,9 @@ func smtpLogin(ctx context.Context, ip, name string, ports []SMTPPort, o *SMTPOp
 		}
 		l.Reply = smtpReply(code, msg)
 		if code == 235 {
+			if send != nil {
+				send(c, spec.Port)
+			}
 			l.Status = DPTOK
 			switch best {
 			case smtpUntrusted:

@@ -35,6 +35,8 @@ type DPTCommand struct {
 	// smtp <host> test <user> [<password>]: log in as User (Password ""
 	// is asked for)
 	SMTPUser, SMTPPassword string
+	// ... [from <address>] to <address>: send a test message
+	SMTPFrom, SMTPTo string
 	// sweep [ports] [<network>]
 	SweepPorts   bool
 	SweepNetwork string
@@ -101,9 +103,10 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	}
 	fmt.Fprintf(&b, "usage: %s [dhcp|<address>|<dnsname>] [%s] [options]\n", prog, tests)
 	fmt.Fprintf(&b, "       %s info             this machine's DHCP lease, gateway, DNS and NTP servers, clock (sends only NTP requests)\n", prog)
-	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]]\n", prog)
+	fmt.Fprintf(&b, "       %s smtp <host> [test <user> [<password>]] [from <address>] [to <address>]\n", prog)
 	fmt.Fprintf(&b, "                            ports 25, 465 and 587: greeting, STARTTLS or TLS, the certificate, AUTH;\n")
-	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given)\n")
+	fmt.Fprintf(&b, "                            test: log in (the password is asked for when not given);\n")
+	fmt.Fprintf(&b, "                            to: then send a test message (from: the user, when it is an address)\n")
 	fmt.Fprintf(&b, "       %s sweep [ports] [<network>]\n", prog)
 	fmt.Fprintf(&b, "                            ping every address on this network (or <network>, 10.0.0.0/24; an address: its /24),\n")
 	fmt.Fprintf(&b, "                            25 at a time; ports: then the common ports of each that answers\n")
@@ -312,21 +315,13 @@ func (c *DPTCommand) words(pos []string) error {
 	}
 	switch c.Mode {
 	case "smtp":
-		const use = "smtp <host> [test <user> [<password>]]"
 		if len(rest) == 0 || slices.Contains(dptModes, strings.ToLower(rest[0])) {
-			return errors.New(use)
+			return errors.New(SMTPUse)
 		}
-		c.Target, rest = rest[0], rest[1:]
-		if len(rest) == 0 {
-			return nil
-		}
-		if !strings.EqualFold(rest[0], "test") || len(rest) < 2 || len(rest) > 3 {
-			return errors.New(use)
-		}
-		c.SMTPUser = rest[1]
-		if len(rest) == 3 {
-			c.SMTPPassword = rest[2]
-		}
+		c.Target = rest[0]
+		var err error
+		c.SMTPUser, c.SMTPPassword, c.SMTPFrom, c.SMTPTo, err = ParseSMTPWords(rest[1:])
+		return err
 	case "sweep":
 		for _, w := range rest {
 			switch {

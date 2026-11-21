@@ -46,6 +46,9 @@ type fakeSMTP struct {
 	brokenTLS          bool   // STARTTLS is offered, its handshake fails
 	auth               string // the AUTH line's mechanisms
 	authSeen           atomic.Bool
+	refuseRcpt         bool         // RCPT TO is refused (relaying denied)
+	got                atomic.Value // the last message's DATA, as a string
+	authed             atomic.Bool
 }
 
 // serve runs a scripted SMTP server; user "u" password "p" logs in.
@@ -108,6 +111,7 @@ func (f *fakeSMTP) session(c net.Conn, cfg *tls.Config) {
 			f.authSeen.Store(true)
 			b, _ := base64.StdEncoding.DecodeString(l[11:])
 			if string(b) == "\x00u\x00p" {
+				f.authed.Store(true)
 				say("235 2.7.0 Accepted")
 			} else {
 				say("535 5.7.8 Bad credentials")
@@ -121,10 +125,33 @@ func (f *fakeSMTP) session(c net.Conn, cfg *tls.Config) {
 			ub, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(u))
 			pb, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(p))
 			if string(ub) == "u" && string(pb) == "p" {
+				f.authed.Store(true)
 				say("235 2.7.0 Accepted")
 			} else {
 				say("535 5.7.8 Bad credentials")
 			}
+		case strings.HasPrefix(up, "MAIL FROM:"):
+			say("250 2.1.0 Ok")
+		case strings.HasPrefix(up, "RCPT TO:") && f.refuseRcpt:
+			say("554 5.7.1 Relay access denied")
+		case strings.HasPrefix(up, "RCPT TO:"):
+			say("250 2.1.5 Ok")
+		case up == "DATA":
+			say("354 End data with <CR><LF>.<CR><LF>")
+			var msg []string
+			for {
+				d, err := r.ReadString('\n')
+				if err != nil {
+					return
+				}
+				d = strings.TrimRight(d, "\r\n")
+				if d == "." {
+					break
+				}
+				msg = append(msg, d)
+			}
+			f.got.Store(strings.Join(msg, "\n"))
+			say("250 2.0.0 Ok: queued as 4F2A")
 		case up == "QUIT":
 			say("221 bye")
 			return
@@ -265,5 +292,83 @@ func TestSMTPLoginAndPlain(t *testing.T) {
 	r, _ = RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: np, Roots: pool, User: "u", Password: "p", Timeout: 2 * time.Second})
 	if l := r.Login; l.Status != DPTFail || !strings.Contains(l.Error, "offers only XOAUTH2") || none.authSeen.Load() {
 		t.Errorf("XOAUTH2 only: %+v", l)
+	}
+}
+
+func TestSMTPSend(t *testing.T) {
+	cert, pool := testCert(t)
+	sub := &fakeSMTP{starttls: true, auth: "PLAIN LOGIN"}
+	ports := []SMTPPortSpec{{closedPort(t), false, "smtp"}, {sub.serve(t, cert), false, "submission"}}
+	smtpLoginOrder = []int{ports[1].Port}
+	defer func() { smtpLoginOrder = []int{587, 465, 25} }()
+	r, err := RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool, User: "u", Password: "p",
+		From: "me@example.com", To: "you@example.org", Agent: "dpt v9", Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := r.Send
+	if m == nil || m.Status != DPTOK || m.Port != ports[1].Port || m.Subject != "test from dpt at 127.0.0.1" || !strings.Contains(m.Reply, "queued as 4F2A") {
+		t.Fatalf("send: %+v\nlogin: %+v\nports: %+v", m, r.Login, r.Ports)
+	}
+	got, _ := sub.got.Load().(string)
+	for _, w := range []string{"From: <me@example.com>", "To: <you@example.org>", "Subject: test from dpt at 127.0.0.1", "sent by dpt v9", "  as        u"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("message lacks %q:\n%s", w, got)
+		}
+	}
+	var b bytes.Buffer
+	RenderSMTP(&b, r, false, false)
+	if !strings.Contains(b.String(), "SEND      me@example.com -> you@example.org on") || !strings.Contains(b.String(), "SEND OK") {
+		t.Errorf("%s", b.String())
+	}
+
+	// relaying refused: FAIL at RCPT, and the run failed
+	sub2 := &fakeSMTP{starttls: true, auth: "PLAIN", refuseRcpt: true}
+	ports[1].Port = sub2.serve(t, cert)
+	smtpLoginOrder = []int{ports[1].Port}
+	r, _ = RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool, User: "u", Password: "p",
+		From: "me@example.com", To: "you@example.org", Timeout: 2 * time.Second})
+	if r.Send.Status != DPTFail || r.Send.Step != "RCPT" || !strings.Contains(r.Send.Reply, "Relay access denied") || !r.Failed() {
+		t.Errorf("refused: %+v", r.Send)
+	}
+
+	// a bad password: nothing sent
+	sub3 := &fakeSMTP{starttls: true, auth: "PLAIN"}
+	ports[1].Port = sub3.serve(t, cert)
+	smtpLoginOrder = []int{ports[1].Port}
+	r, _ = RunSMTP(context.Background(), "127.0.0.1", SMTPOptions{Ports: ports, Roots: pool, User: "u", Password: "wrong",
+		From: "me@example.com", To: "you@example.org", Timeout: 2 * time.Second})
+	if r.Send == nil || r.Send.Status != DPTFail || sub3.got.Load() != nil {
+		t.Errorf("bad login: %+v", r.Send)
+	}
+}
+
+func TestParseSMTPWords(t *testing.T) {
+	for _, c := range []struct {
+		in                   string
+		user, pass, from, to string
+		bad                  bool
+	}{
+		{"", "", "", "", "", false},
+		{"test u", "u", "", "", "", false},
+		{"test u p", "u", "p", "", "", false},
+		{"test me@a.com p to you@b.org", "me@a.com", "p", "me@a.com", "you@b.org", false},
+		{"test me@a.com to you@b.org", "me@a.com", "", "me@a.com", "you@b.org", false},
+		{"test u p from me@a.com to you@b.org", "u", "p", "me@a.com", "you@b.org", false},
+		{"to you@b.org from me@a.com", "", "", "me@a.com", "you@b.org", false},
+		{"test u to you@b.org", "", "", "", "", true},     // u is no address: from needed
+		{"from me@a.com", "", "", "", "", true},           // from with no to
+		{"to you", "", "", "", "", true},                  // not an address
+		{"to a@b.org\r\nBcc:x@y.z", "", "", "", "", true}, // no header injection
+		{"test", "", "", "", "", true},
+		{"test u p extra", "", "", "", "", true},
+	} {
+		u, p, f, to, err := ParseSMTPWords(strings.Fields(strings.ReplaceAll(c.in, "\\r\\n", "\r\n")))
+		if c.bad != (err != nil) || u != c.user || p != c.pass || f != c.from || to != c.to {
+			t.Errorf("%q: %q %q %q %q %v", c.in, u, p, f, to, err)
+		}
+	}
+	if MailAddr("a@b.org\r\nBcc: c@d.org") || !MailAddr("first.last+tag@sub.example.co.uk") {
+		t.Error("MailAddr")
 	}
 }

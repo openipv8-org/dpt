@@ -126,6 +126,29 @@ func (p *SMTPPrinter) Login(l *SMTPLogin) {
 	}
 }
 
+// Send writes the SEND section.
+//
+//	SEND      jamie@example.com -> them@example.org on 587
+//	          "test from dpt at 192.168.178.20"   250 2.0.0 OK queued as 4F2A
+func (p *SMTPPrinter) Send(m *SMTPSend) {
+	o := p.o
+	s := o.bold(m.From) + " -> " + o.bold(m.To)
+	if m.Port != 0 {
+		s += fmt.Sprintf(" on %d", m.Port)
+	}
+	o.line("SEND", s)
+	if m.Subject != "" {
+		r := ""
+		if m.Reply != "" {
+			r = "   " + o.by(m.Status, m.Reply)
+		}
+		o.line("", fmt.Sprintf("%q", m.Subject)+r)
+	}
+	if m.Error != "" {
+		o.line("", o.by(m.Status, m.Error))
+	}
+}
+
 // Summary writes the rule and 25/smtp OK   465/submissions NONE ...
 func (p *SMTPPrinter) Summary(r *SMTPReport) {
 	var names, st []string
@@ -134,6 +157,9 @@ func (p *SMTPPrinter) Summary(r *SMTPReport) {
 	}
 	if r.Login != nil {
 		names, st = append(names, "LOGIN"), append(st, r.Login.Status)
+	}
+	if r.Send != nil {
+		names, st = append(names, "SEND"), append(st, r.Send.Status)
 	}
 	p.o.summary([][2][]string{{names, st}})
 }
@@ -147,6 +173,9 @@ func RenderSMTP(w io.Writer, r *SMTPReport, color, verbose bool) {
 	}
 	if r.Login != nil {
 		p.Login(r.Login)
+	}
+	if r.Send != nil {
+		p.Send(r.Send)
 	}
 	p.Summary(r)
 }

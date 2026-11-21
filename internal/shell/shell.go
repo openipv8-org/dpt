@@ -48,6 +48,8 @@ type Shell struct {
 
 	DPT   dpt.DPTDHCPOptions // count, names, references, timeout from the command line
 	Color bool
+	// Agent names dpt in a test message (dpt v0.2.1).
+	Agent string
 	// NewLive, when set, starts the status line shown while a command
 	// works (a terminal); nil: none.
 	NewLive func() *dpt.Live
@@ -244,6 +246,9 @@ dpt:
                           and log in: over trusted TLS when there is one, else untrusted TLS,
                           else in the clear (WARN). No host: the last smtp host; no password:
                           asked for, and never kept in the history
+  smtp [host] [test <user> [password]] [from <address>] to <address>
+                          and send a test message, "test from dpt at <this address>"
+                          (from: the user, when it is an address)
   sweep [ports] [network] ping the /24 around the server (or network, or this machine's),
                           25 at a time; ports: then the common ports of each live one
   ports [host] [ports]    the common TCP ports and UDP services (DNS, NTP, QUIC...) of host

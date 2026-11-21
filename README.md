@@ -10,7 +10,7 @@ the segment and what it hands out.
 dpt [dhcp|<address>|<dnsname>] [-tdp] [options]     Linux, macOS
 dpt [dhcp|<address>|<dnsname>] [/tdp] [options]     Windows
 dpt info                                            this machine's lease, DNS, NTP, clock
-dpt smtp <host> [test <user> [<password>]]          SMTP on 25, 465, 587, and a login
+dpt smtp <host> [test <user> [<pw>]] [to <addr>]    SMTP on 25, 465, 587, a login, a test message
 dpt sweep [ports] [<network>]                       live addresses (and their open ports)
 dpt ports <host> [<ports>]                          the common TCP and UDP ports of host, or a list
 dpt outside-ip                                      the address the internet sees
@@ -95,6 +95,22 @@ works with, including when its STARTTLS fails. Among equally safe ports
 the order is 587, 465, then 25. A login that is not over trusted TLS is
 WARN, and says who could have read the password. Leave the password out and dpt asks for it
 without echoing it. In the shell, it is never written to the history.
+
+Add `to <address>` and, once logged in, dpt sends a test message on the
+same connection: MAIL FROM, RCPT TO, DATA, with the subject
+"test from dpt at <this machine's address>" and a body saying which
+machine, server, port and user sent it. `from <address>` sets the
+sender; without it the user is the sender when it is an address. The
+server's reply is shown (`250 2.0.0 OK queued as ...`), or where it
+refused: at RCPT, `554 Relay access denied` means the server will not
+send for this sender. With `to` and no `test`, it is sent on 25 with no
+login, as another mail server would deliver to this one: to an address
+this server takes mail for.
+
+```
+dpt smtp mail.smtp2go.com test jamie@example.com to someone@example.org
+dpt smtp smtp.office365.com test user@example.com from shared@example.com to me@example.com
+```
 
 `dpt sweep` pings every address on this machine's network, 25 at a time
 (two echoes each, 1 s wait), and lists the ones that answer with their
