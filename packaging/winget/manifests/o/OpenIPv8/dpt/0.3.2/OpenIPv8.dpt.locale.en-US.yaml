@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+PackageIdentifier: OpenIPv8.dpt
+PackageVersion: 0.3.2
+PackageLocale: en-US
+Publisher: OpenIPv8
+PublisherUrl: https://github.com/openipv8-org
+PublisherSupportUrl: https://github.com/openipv8-org/dpt/issues
+Author: Jamie Thain
+PackageName: DPT - Diagnostic Ports Time
+PackageUrl: https://github.com/openipv8-org/dpt
+License: MIT
+LicenseUrl: https://github.com/openipv8-org/dpt/blob/main/LICENSE
+ShortDescription: Network diagnostics in one tool - DNS, ping, time, ports, mail, trace - with an nslookup-style shell.
+Description: |-
+  dpt answers the questions of a network morning from one program: does the address answer ping,
+  does it resolve and serve DNS, is the clock right (NTP against Google, Microsoft, AWS, Apple
+  and NIST), which ports and UDP services are open, does its mail server work from here and over
+  which ports, which routers are on the way, and what DHCP hands out. Run with no arguments it is
+  an nslookup-style shell with dpt's commands added.
+Moniker: dpt
+Tags:
+- dns
+- network
+- nslookup
+- ntp
+- ping
+- port-scanner
+- smtp
+- traceroute
+- dhcp
+- diagnostics
+ReleaseNotesUrl: https://github.com/openipv8-org/dpt/releases/tag/v0.3.2
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0

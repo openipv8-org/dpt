@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+PackageIdentifier: OpenIPv8.dpt
+PackageVersion: 0.3.2
+InstallerType: portable
+Commands:
+- dpt
+MinimumOSVersion: 10.0.0.0
+ReleaseDate: 2026-11-22
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/openipv8-org/dpt/releases/download/v0.3.2/dpt-windows-amd64.exe
+  InstallerSha256: E7C80ED6800701970D0DA64A1B0A699CE5CFA137D827B1CD7D9C9A916AA95B0F
+- Architecture: arm64
+  InstallerUrl: https://github.com/openipv8-org/dpt/releases/download/v0.3.2/dpt-windows-arm64.exe
+  InstallerSha256: 15F5A60FCF3F74E13398829A22A758889A13B17F7B92F479AC79C258DC8A2FAE
+ManifestType: installer
+ManifestVersion: 1.9.0
