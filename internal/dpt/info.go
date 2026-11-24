@@ -364,6 +364,7 @@ func readLease(path string, parse func(b []byte, mtime time.Time) *DPTLease) (*D
 // chronySources reads chrony's configuration: server, pool and peer lines,
 // following sourcedir (*.sources), confdir (*.conf) and include.
 func chronySources(path string, depth int, seen map[string]bool) []string {
+	path = filepath.Clean(path) // one file, one name: a//b and a/b, \ and / on Windows
 	if depth > 4 || seen[path] {
 		return nil
 	}

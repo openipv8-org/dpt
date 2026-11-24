@@ -5,6 +5,7 @@ package selfinstall
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -79,20 +80,28 @@ func TestInstallAndVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(dest)
-	if err != nil || st.Mode().Perm() != 0o755 {
-		t.Fatalf("%v %v", st, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if v, err := InstalledVersion(dest); v != "v0.1.5" || err != nil {
-		t.Errorf("installed version %q %v", v, err)
-	}
-	// something there that does not say: never taken for "not installed"
-	other := filepath.Join(d, "other")
-	os.WriteFile(other, []byte("#!/bin/sh\nexit 3\n"), 0o755)
-	if v, err := InstalledVersion(other); v != "" || err != ErrUnknownVersion {
-		t.Errorf("unknown: %q %v", v, err)
-	}
-	if v, err := InstalledVersion(filepath.Join(d, "none")); v != "" || err != nil {
-		t.Errorf("none: %q %v", v, err)
+	// the version is asked of the program: here shell scripts stand in for
+	// it, which Windows cannot run (scripts/ci-test.sh installs the real
+	// dpt there and asks it), nor has it Unix permissions
+	if runtime.GOOS != "windows" {
+		if st.Mode().Perm() != 0o755 {
+			t.Fatalf("mode %v", st.Mode())
+		}
+		if v, err := InstalledVersion(dest); v != "v0.1.5" || err != nil {
+			t.Errorf("installed version %q %v", v, err)
+		}
+		// something there that does not say: never taken for "not installed"
+		other := filepath.Join(d, "other")
+		os.WriteFile(other, []byte("#!/bin/sh\nexit 3\n"), 0o755)
+		if v, err := InstalledVersion(other); v != "" || err != ErrUnknownVersion {
+			t.Errorf("unknown: %q %v", v, err)
+		}
+		if v, err := InstalledVersion(filepath.Join(d, "none")); v != "" || err != nil {
+			t.Errorf("none: %q %v", v, err)
+		}
 	}
 	// again, over the top
 	if err := Install(src, dest); err != nil {

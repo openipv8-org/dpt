@@ -367,6 +367,18 @@ func TestParseDPTArgs(t *testing.T) {
 	if c, _ := ParseDPTArgs([]string{"/?"}, DPTStyleWindows); c.Mode != "help" {
 		t.Error("/? is help")
 	}
+	// on Windows, typed the Linux way: help and version work, any other
+	// dash word is bad usage, never a host to look up
+	for w, mode := range map[string]string{"--help": "help", "-h": "help", "-help": "help", "-H": "help", "--version": "version", "-version": "version"} {
+		if c, err := ParseDPTArgs([]string{w}, DPTStyleWindows); err != nil || c.Mode != mode {
+			t.Errorf("windows %s: %+v %v", w, c, err)
+		}
+	}
+	for _, a := range [][]string{{"--bogus"}, {"-c", "3", "1.1.1.1"}, {"1.1.1.1", "-t"}} {
+		if _, err := ParseDPTArgs(a, DPTStyleWindows); err == nil || !strings.Contains(err.Error(), "/c:3") {
+			t.Errorf("windows %v: %v", a, err)
+		}
+	}
 	for _, st := range []DPTArgStyle{DPTStyleUnix, DPTStyleWindows} {
 		for _, w := range []string{"version", "Version", "help"} {
 			if c, err := ParseDPTArgs([]string{w}, st); err != nil || c.Mode != strings.ToLower(w) {

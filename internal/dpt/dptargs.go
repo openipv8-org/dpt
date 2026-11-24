@@ -205,6 +205,20 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 				c.Mode = "help"
 				return c, nil
 			}
+			// typed the Linux way: help and version as they say; any
+			// other dash word is a mistake, never a host (no name starts
+			// with a dash), so it is bad usage, not a failed lookup
+			if strings.HasPrefix(a, "-") && len(a) > 1 {
+				switch strings.ToLower(strings.TrimLeft(a, "-")) {
+				case "h", "help":
+					c.Mode = "help"
+					return c, nil
+				case "version":
+					c.Mode = "version"
+					return c, nil
+				}
+				return nil, fmt.Errorf("unknown option %s (on Windows options start with /: /c:3, /? for help)", Printable(a))
+			}
 			if strings.HasPrefix(a, "/") && len(a) > 1 {
 				isOpt, body = true, a[1:]
 				if k := strings.IndexByte(body, ':'); k >= 0 {

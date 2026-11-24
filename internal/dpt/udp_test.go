@@ -5,7 +5,10 @@ package dpt
 import (
 	"context"
 	"net"
+	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -51,6 +54,54 @@ func TestQUICProbe(t *testing.T) {
 	}
 }
 
+// a port with no request of its own is sent udpAnyProbe, never an empty
+// datagram (Windows sends none): a server that answers only what has
+// something in it must be found open
+func TestProbeUDPAnyPort(t *testing.T) {
+	c, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	go func() {
+		b := make([]byte, 1500)
+		for {
+			n, a, err := c.ReadFrom(b)
+			if err != nil {
+				return
+			}
+			if n > 0 {
+				c.WriteTo([]byte("ok"), a)
+			}
+		}
+	}()
+	port := c.LocalAddr().(*net.UDPAddr).Port
+	if udpProbes[port] != nil {
+		t.Skip("the port drawn has a request of its own")
+	}
+	if st, _ := probeUDP(context.Background(), "127.0.0.1", port, time.Second); st != udpOpen {
+		t.Errorf("port %d answering anything not empty: %v", port, st)
+	}
+	for p, req := range udpProbes {
+		if len(req) == 0 {
+			t.Errorf("port %d: empty request", p)
+		}
+	}
+}
+
+func TestRefused(t *testing.T) {
+	for _, e := range []error{syscall.ECONNREFUSED, syscall.Errno(wsaeconnreset),
+		&net.OpError{Op: "read", Net: "udp", Err: os.NewSyscallError("wsarecv", syscall.Errno(wsaeconnreset))},
+		&net.OpError{Op: "read", Net: "udp", Err: os.NewSyscallError("read", syscall.ECONNREFUSED)}} {
+		if !refused(e) {
+			t.Errorf("%v: not taken for closed", e)
+		}
+	}
+	if refused(os.ErrDeadlineExceeded) {
+		t.Error("a timeout taken for closed")
+	}
+}
+
 func TestProbeUDP(t *testing.T) {
 	c, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -76,7 +127,9 @@ func TestProbeUDP(t *testing.T) {
 	d, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	gone := d.LocalAddr().(*net.UDPAddr).Port
 	d.Close()
-	if st, _ := probeUDP(ctx, "127.0.0.1", gone, 500*time.Millisecond); st != udpClosed && st != udpNoAnswer {
+	// loopback always says so, but macOS limits how many such answers it
+	// sends a second, so there silence is allowed
+	if st, _ := probeUDP(ctx, "127.0.0.1", gone, 500*time.Millisecond); st != udpClosed && !(runtime.GOOS == "darwin" && st == udpNoAnswer) {
 		t.Errorf("closed port: %v", st)
 	}
 	o, _, _ := ScanPorts(ctx, "127.0.0.1", []DPTPortName{{port, "echo", "udp"}}, time.Second, make(chan struct{}, 2), nil)

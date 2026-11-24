@@ -75,7 +75,11 @@ echo "dpt CI test: $OS/$ARCH, $(uname -a)"
 # the right program on the right machine, run natively
 run "version: this build, this system" 0 $VERSION -- "dpt $VER ($OS/$ARCH)"
 run "help" 0 $HELP -- "DPT - Diagnostic Ports Time" "smtp prompt"
+run "--help (as people type it, Windows too)" 0 --help -- "DPT - Diagnostic Ports Time"
+run "-h" 0 -h -- "DPT - Diagnostic Ports Time"
+run "--version" 0 --version -- "dpt $VER"
 run "bad usage" 3 $(o bogus)
+[ $OS = windows ] && run "a Linux option on Windows: bad usage, says the Windows way" 3 -c 3 1.1.1.1 -- "/c:3"
 run "two targets" 3 1.1.1.1 8.8.8.8
 run "a dead address (must FAIL)" 1 192.0.2.1 $(o p) $(o c 2) $(o w 1) -- PING
 run "smtp alone (must show how to use it)" 3 smtp -- "smtp prompt"

@@ -380,7 +380,7 @@ func TestCertExpiry(t *testing.T) {
 		expiring bool
 		words    string
 	}{
-		{now.Add(90 * 24 * time.Hour), false, "expires in 89 days"},
+		{now.Add(90*24*time.Hour - time.Minute), false, "expires in 89 days"},
 		{now.Add(20*24*time.Hour + time.Hour), true, "expires in 20 days"},
 		{now.Add(36 * time.Hour), true, "expires tomorrow"},
 		{now.Add(time.Hour), true, "expires today"},

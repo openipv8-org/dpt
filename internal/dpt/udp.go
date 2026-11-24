@@ -74,8 +74,15 @@ const (
 	udpClosed
 )
 
-// probeUDP sends port's request (an empty datagram for a port with
-// none), twice if the first gets nothing, and waits for an answer.
+// udpAnyProbe goes to a port with no request of its own: two empty lines.
+// Not an empty datagram: Windows sends none (a zero-length write never
+// leaves the machine), and some stacks and firewalls drop them; a line
+// service (echo, daytime, chargen, quote) answers it, and a closed port
+// is closed either way.
+var udpAnyProbe = []byte("\r\n\r\n")
+
+// probeUDP sends port's request (udpAnyProbe for a port with none),
+// twice if the first gets nothing, and waits for an answer.
 func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (udpState, time.Duration) {
 	d := net.Dialer{Timeout: timeout}
 	c, err := d.DialContext(ctx, "udp", net.JoinHostPort(ip, strconv.Itoa(port)))
@@ -84,8 +91,8 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 	}
 	defer c.Close()
 	req := udpProbes[port]
-	if req == nil {
-		req = []byte{}
+	if len(req) == 0 {
+		req = udpAnyProbe
 	}
 	buf := make([]byte, 1500)
 	wait := max(timeout/2, 200*time.Millisecond)
@@ -110,10 +117,20 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 }
 
 // refused: the host said the port is closed (ICMP port unreachable,
-// reported on the connected socket).
+// reported on the connected socket: ECONNREFUSED on Linux and macOS,
+// WSAECONNRESET, 10054, on Windows).
 func refused(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused")
+	var e syscall.Errno
+	if errors.As(err, &e) && (e == syscall.ECONNREFUSED || uintptr(e) == wsaeconnreset) {
+		return true
+	}
+	return strings.Contains(err.Error(), "refused") || strings.Contains(err.Error(), "forcibly closed")
 }
+
+// wsaeconnreset is Windows' WSAECONNRESET: on a UDP socket, the port
+// unreachable that came back for what was sent.  No Linux or macOS
+// errno is this large.
+const wsaeconnreset = 10054
 
 // ParsePortList reads "587,2525,8025", "8000-8010", "53/udp" and mixes
 // of them; a port is TCP unless it says /udp.  Known ports get their
