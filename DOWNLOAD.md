@@ -17,16 +17,37 @@ Every link below always gets the **latest release**
 but nobody has run it on that kind of machine yet. It should work; if it
 does not, please [open an issue](https://github.com/openipv8-org/dpt/issues).
 
-## Have an Apple Silicon Mac? Please test it
+## 🙏 Have one of these? Please test it
+
+**Mac Apple Silicon, Windows on ARM and Linux on ARM have never been tested.** If you have one, please pull the repo, run the test, and send us the results in an [issue](https://github.com/openipv8-org/dpt/issues/new) (paste or attach the log).
+
+**Mac, Apple Silicon (M1 and later)**, in Terminal:
 
 ```
-git clone https://github.com/openipv8-org/dpt ~/dpt
+git clone https://github.com/openipv8-org/dpt ~/dpt     # or, if you have it: git -C ~/dpt pull
 bash ~/dpt/scripts/mac-test.sh
 ```
 
-It downloads the latest release for your Mac, checks it against
-SHA256SUMS, runs the checks and writes `~/dpt/mac-test.log`. Send that log
-in an issue.
+The results are in `~/dpt/mac-test.log`. At the end it tries to copy the log to our test machine. Press Ctrl-C there; that step is only for us.
+
+**Windows on ARM**, in PowerShell (a normal one, not "Run as administrator"):
+
+```
+irm https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/windows-test.ps1 | iex
+```
+
+When it finishes, the results are on the clipboard. Paste them into the issue.
+
+**Linux on ARM**:
+
+```
+curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash
+dpt version; dpt 1.1.1.1; dpt info; dpt ports 1.1.1.1; dpt trace 1.1.1.1; sudo dpt dhcp
+```
+
+Paste what it prints into the issue.
+
+Thank you!
 
 ## Install
 

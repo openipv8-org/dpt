@@ -11,7 +11,39 @@
 | Linux, Intel/AMD | [dpt-linux-amd64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-amd64) | ✅ yes, Debian 13 |
 | Linux, ARM (Raspberry Pi 64-bit, ARM servers) | [dpt-linux-arm64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-arm64) | ⚠️ **not tested** (built, never run on one) |
 
-The links always get the latest release. **Mac Apple Silicon, Windows ARM and Linux ARM are not tested.** If you have one of those, please try it and [open an issue](https://github.com/openipv8-org/dpt/issues). See the [download page](DOWNLOAD.md) for how to install and how to test.
+The links always get the latest release ([download page](DOWNLOAD.md): how to install).
+
+### 🙏 Have one of these? Please test it
+
+**Mac Apple Silicon, Windows on ARM and Linux on ARM have never been tested.** If you have one, please pull the repo, run the test, and send us the results in an [issue](https://github.com/openipv8-org/dpt/issues/new) (paste or attach the log).
+
+**Mac, Apple Silicon (M1 and later)**, in Terminal:
+
+```
+git clone https://github.com/openipv8-org/dpt ~/dpt     # or, if you have it: git -C ~/dpt pull
+bash ~/dpt/scripts/mac-test.sh
+```
+
+The results are in `~/dpt/mac-test.log`. At the end it tries to copy the log to our test machine. Press Ctrl-C there; that step is only for us.
+
+**Windows on ARM**, in PowerShell (a normal one, not "Run as administrator"):
+
+```
+irm https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/windows-test.ps1 | iex
+```
+
+When it finishes, the results are on the clipboard. Paste them into the issue.
+
+**Linux on ARM**:
+
+```
+curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash
+dpt version; dpt 1.1.1.1; dpt info; dpt ports 1.1.1.1; dpt trace 1.1.1.1; sudo dpt dhcp
+```
+
+Paste what it prints into the issue.
+
+Thank you!
 
 One tool for a network morning. Is this address working as a network
 peer: ping it, use it as a DNS resolver, ask it for the time and compare
