@@ -90,6 +90,7 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 		return udpNoAnswer, 0
 	}
 	defer c.Close()
+	udpReportUnreachable(c)
 	req := udpProbes[port]
 	if len(req) == 0 {
 		req = udpAnyProbe
