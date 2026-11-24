@@ -1,0 +1,120 @@
+# Build dpt and test it on all six systems it is released for, each on a
+# real machine of its kind (GitHub's runners: Intel and ARM, Linux, macOS,
+# Windows).  Pushing a tag (v1.2.3, v1.2.3-rc1) releases it, but only once
+# all six pass: nothing untested goes out.
+#
+#   push to main:       build, test (go test and scripts/ci-test.sh)
+#   push a tag v*:      build, test, then publish the GitHub release
+#                       (a -rc tag is a pre-release); notes: the tag's
+#                       message, then scripts/release-download.md
+#   run by hand, with a release tag: test that release's published files
+name: test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'test a published release (e.g. v0.3.2); empty: build main'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      ver: ${{ steps.ver.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: ver
+        run: |
+          if [ -n "${{ inputs.release }}" ]; then v="${{ inputs.release }}"
+          else v=$(git describe --tags --always); fi
+          echo "ver=$v" >> "$GITHUB_OUTPUT"
+      - name: build (or fetch the release)
+        env:
+          REL: ${{ inputs.release }}
+        run: |
+          if [ -n "$REL" ]; then
+            mkdir -p dist && cd dist
+            for f in SHA256SUMS dpt-{linux,darwin}-{amd64,arm64} dpt-windows-{amd64,arm64}.exe; do
+              curl -fsSL -o "$f" "https://github.com/${{ github.repository }}/releases/download/$REL/$f"
+            done
+            sha256sum -c SHA256SUMS
+          else
+            make dist VER=${{ steps.ver.outputs.ver }}
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-amd64,   runs-on: ubuntu-24.04,     bin: dpt-linux-amd64 }
+          - { name: linux-arm64,   runs-on: ubuntu-24.04-arm, bin: dpt-linux-arm64 }
+          - { name: darwin-amd64,  runs-on: macos-15-intel,   bin: dpt-darwin-amd64 }
+          - { name: darwin-arm64,  runs-on: macos-15,         bin: dpt-darwin-arm64 }
+          - { name: windows-amd64, runs-on: windows-2025,     bin: dpt-windows-amd64.exe }
+          - { name: windows-arm64, runs-on: windows-11-arm,   bin: dpt-windows-arm64.exe }
+    name: test ${{ matrix.name }}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go test
+        shell: bash
+        run: go vet ./... && go test ./...
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: ci-test.sh
+        shell: bash
+        run: bash scripts/ci-test.sh "dist/${{ matrix.bin }}" "${{ needs.build.outputs.ver }}" 2>&1 | tee ci-test-${{ matrix.name }}.log; exit ${PIPESTATUS[0]}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: log-${{ matrix.name }}
+          path: ci-test-${{ matrix.name }}.log
+
+  release:
+    needs: [build, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch --force origin "+${{ github.ref }}:${{ github.ref }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          { git tag -l --format='%(contents)' "$TAG" | sed '/-----BEGIN PGP/,$d'
+            echo; cat scripts/release-download.md; } > notes.md
+          pre=; case "$TAG" in *-*) pre=--prerelease ;; esac
+          gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md $pre --verify-tag
