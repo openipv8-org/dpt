@@ -215,6 +215,8 @@ interface names.
 
 ## Install
 
+**[Download page](DOWNLOAD.md)**: every system, and which ones are tested.
+
 Linux and macOS, into `/usr/local/bin/dpt` (the latest release, checked
 against its SHA256SUMS; sudo asks for your password):
 
