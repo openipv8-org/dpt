@@ -208,6 +208,12 @@ var client = &http.Client{Timeout: 5 * time.Minute}
 func LatestTag(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/"+Repo+"/releases/latest", nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	// A token, where one is set (as CI does), lifts GitHub's limit of 60
+	// unauthenticated requests an hour from one address, which a shared
+	// machine can use up.  It goes to api.github.com only.
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		req.Header.Set("Authorization", "Bearer "+t)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

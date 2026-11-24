@@ -29,7 +29,7 @@ part and tell us in an [issue](https://github.com/openipv8-org/dpt/issues/new):
 Linux and Mac, install or update:
 `curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash`
 
-**v0.3.2 on Windows:** `dpt --help` was taken for a name, and `dpt ports` showed a UDP port it had no request for as "no answer" even when open or closed. Both are fixed in v0.3.3 (`dpt upgrade`).
+**v0.3.2 on Windows:** `dpt --help` was taken for a name, and `dpt ports` showed a UDP port it had no request for as "no answer" even when open or closed. Both are fixed in v0.3.4 (`dpt upgrade`).
 
 One tool for a network morning. Is this address working as a network
 peer: ping it, use it as a DNS resolver, ask it for the time and compare

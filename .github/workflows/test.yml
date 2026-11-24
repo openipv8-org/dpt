@@ -92,6 +92,9 @@ jobs:
       - name: ci-test.sh
         if: success() || failure()
         shell: bash
+        env:
+          # dpt upgrade asks GitHub's API; without it, a shared runner can be rate-limited (403)
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash scripts/ci-test.sh "dist/${{ matrix.bin }}" "${{ needs.build.outputs.ver }}" 2>&1 | tee ci-test-${{ matrix.name }}.log; exit ${PIPESTATUS[0]}
       - uses: actions/upload-artifact@v4
         if: always()
