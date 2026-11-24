@@ -82,10 +82,15 @@ jobs:
         shell: bash
         run: go vet ./... && go test ./...
       - uses: actions/download-artifact@v4
+        if: success() || failure()
         with:
           name: dist
           path: dist
+      - name: let ping work without sudo, as on Debian, Ubuntu and Fedora machines
+        if: runner.os == 'Linux' && (success() || failure())
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - name: ci-test.sh
+        if: success() || failure()
         shell: bash
         run: bash scripts/ci-test.sh "dist/${{ matrix.bin }}" "${{ needs.build.outputs.ver }}" 2>&1 | tee ci-test-${{ matrix.name }}.log; exit ${PIPESTATUS[0]}
       - uses: actions/upload-artifact@v4

@@ -51,7 +51,7 @@ run() {
 	[ $# -gt 0 ] && shift && must=("$@")
 	echo
 	echo "=== $title"
-	echo "\$ dpt ${args[*]}"
+	echo "\$ dpt ${args[*]+${args[*]}}"
 	$PRE "$BIN" ${args[@]+"${args[@]}"} > "$OUT" 2>&1 < /dev/null
 	local got=$? bad=
 	cat "$OUT"
