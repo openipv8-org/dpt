@@ -1,5 +1,18 @@
 # DPT — Diagnostic Ports Time
 
+## ⬇ Download
+
+| System | Download | Tested |
+|---|---|---|
+| Windows, most PCs (Intel/AMD) | [dpt-windows-amd64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-amd64.exe) | ✅ yes, on a Windows PC |
+| Windows on ARM (Snapdragon, Surface Pro X) | [dpt-windows-arm64.exe](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-arm64.exe) | ⚠️ **not tested** (built, never run on one) |
+| Mac, Apple Silicon (M1 and later) | [dpt-darwin-arm64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-arm64) | ⚠️ **not tested** (no Apple Silicon Mac to test on) |
+| Mac, Intel | [dpt-darwin-amd64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-amd64) | ✅ yes, macOS 13 (an early version; the newer commands not yet) |
+| Linux, Intel/AMD | [dpt-linux-amd64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-amd64) | ✅ yes, Debian 13 |
+| Linux, ARM (Raspberry Pi 64-bit, ARM servers) | [dpt-linux-arm64](https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-arm64) | ⚠️ **not tested** (built, never run on one) |
+
+The links always get the latest release. **Mac Apple Silicon, Windows ARM and Linux ARM are not tested.** If you have one of those, please try it and [open an issue](https://github.com/openipv8-org/dpt/issues). See the [download page](DOWNLOAD.md) for how to install and how to test.
+
 One tool for a network morning. Is this address working as a network
 peer: ping it, use it as a DNS resolver, ask it for the time and compare
 that with public NTP servers, and check this machine's own clock against
@@ -214,8 +227,6 @@ mail questions. Tab completes commands, `set` options, DNS types and
 interface names.
 
 ## Install
-
-**[Download page](DOWNLOAD.md)**: every system, and which ones are tested.
 
 Linux and macOS, into `/usr/local/bin/dpt` (the latest release, checked
 against its SHA256SUMS; sudo asks for your password):
