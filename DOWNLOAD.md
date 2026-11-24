@@ -31,7 +31,7 @@ part and tell us in an [issue](https://github.com/openipv8-org/dpt/issues/new):
 Linux and Mac, install or update:
 `curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash`
 
-**v0.3.2 on Windows:** `dpt --help` there is taken for a name (use `dpt /?`), and `dpt ports` shows a UDP port it has no request for as "no answer" even when open or closed. Both are fixed and tested on all six systems, and come with the next release.
+**v0.3.2 on Windows:** `dpt --help` was taken for a name, and `dpt ports` showed a UDP port it had no request for as "no answer" even when open or closed. Both are fixed in v0.3.3 (`dpt upgrade`).
 
 ## Install
 
