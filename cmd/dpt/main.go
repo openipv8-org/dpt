@@ -174,7 +174,7 @@ func run(args []string) int {
 		return exitOK
 
 	case "install", "upgrade":
-		return runInstall(ctx, c.Mode, args, color)
+		return runInstall(ctx, c.Mode, c.InstallVersion, args, color)
 
 	case "time":
 		if c.TimeNative {
@@ -313,7 +313,7 @@ func run(args []string) int {
 }
 
 // runInstall is dpt install and dpt upgrade.
-func runInstall(ctx context.Context, mode string, args []string, color bool) int {
+func runInstall(ctx context.Context, mode, pinned string, args []string, color bool) int {
 	// a package manager's dpt: upgrade runs the manager, install leaves it
 	if exe, err := os.Executable(); err == nil {
 		if m := selfinstall.Manager(exe); m != "" {
@@ -339,8 +339,19 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 	dest := selfinstall.Dest()
 	// nothing to write: say so, and ask for no privilege
 	var latest, have, self string
-	switch mode {
-	case "install":
+	switch {
+	case pinned != "":
+		// install <version>: that release, older ones too
+		have, _ = selfinstall.InstalledVersion(dest)
+		if have == pinned {
+			fmt.Printf("dpt %s is installed: %s\n", have, dest)
+			return exitOK
+		}
+		latest = pinned
+		if have != "" && selfinstall.Newer(have, pinned) {
+			fmt.Printf("dpt %s is older than the %s installed (dpt upgrade goes back to the newest)\n", pinned, have)
+		}
+	case mode == "install":
 		var err error
 		if self, err = os.Executable(); err != nil {
 			fmt.Fprintln(os.Stderr, "dpt:", err)
@@ -350,7 +361,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			fmt.Printf("dpt %s is installed: %s\n", version, dest)
 			return exitOK
 		}
-	case "upgrade":
+	case mode == "upgrade":
 		var err error
 		fmt.Println("checking the newest release on github.com/" + selfinstall.Repo + " ...")
 		if latest, err = selfinstall.LatestTag(ctx); err != nil {
@@ -368,7 +379,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			return exitOK
 		}
 	}
-	if !selfinstall.Writable(dest) || mode == "install" && selfinstall.ManPath() != "" && !selfinstall.Writable(selfinstall.ManPath()) {
+	if !selfinstall.Writable(dest) || mode == "install" && pinned == "" && selfinstall.ManPath() != "" && !selfinstall.Writable(selfinstall.ManPath()) {
 		// typed by a person: ask for the privilege; from a script: never
 		if elevate.Possible() && elevate.Interactive() {
 			code, err := elevate.Run(mode, args, color)
@@ -381,8 +392,23 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 		fmt.Fprintf(os.Stderr, "dpt: %s needs %s (to write %s)\n", mode, dpt.DHCPNeeds, filepath.Dir(dest))
 		return exitMEL
 	}
-	switch mode {
-	case "install":
+	switch {
+	case pinned != "":
+		file, err := selfinstall.Download(ctx, pinned, filepath.Dir(dest), os.Stdout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dpt: install %s: %v\n  (the releases: https://github.com/%s/releases)\n", pinned, err, selfinstall.Repo)
+			return exitFail
+		}
+		defer os.Remove(file)
+		if err := selfinstall.Install(file, dest); err != nil {
+			fmt.Fprintln(os.Stderr, "dpt: install:", err)
+			return exitFail
+		}
+		if have == "" {
+			have = "none"
+		}
+		fmt.Printf("installed %s: %s -> %s\n", dest, have, pinned)
+	case mode == "install":
 		if selfinstall.SameFile(self, dest) {
 			fmt.Printf("dpt %s is installed: %s\n", version, dest)
 		} else {
@@ -399,7 +425,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 				fmt.Printf("installed the manual page: %s (man dpt)\n", selfinstall.ManPath())
 			}
 		}
-	case "upgrade":
+	case mode == "upgrade":
 		file, err := selfinstall.Download(ctx, latest, filepath.Dir(dest), os.Stdout)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "dpt: upgrade:", err)
@@ -448,7 +474,7 @@ func autoInstall(ctx context.Context, color bool) int {
 			fmt.Printf("dpt %s is already installed at %s: nothing changed\n", have, dest)
 			return exitOK
 		}
-		return runInstall(ctx, "install", []string{"install"}, color)
+		return runInstall(ctx, "install", "", []string{"install"}, color)
 	}()
 	if code == exitOK {
 		fmt.Println("\nto use it: open a new terminal and type dpt")

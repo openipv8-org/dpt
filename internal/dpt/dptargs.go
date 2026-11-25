@@ -4,6 +4,7 @@ package dpt
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,6 +43,8 @@ type DPTCommand struct {
 	SweepNetwork string
 	// ports <host> [<list>]: nil is DPTDefaultPorts
 	PortList []DPTPortName
+	// install <version>: that release, not this dpt (v0.3.1)
+	InstallVersion string
 	// whois <query> [<server>] [both], rdap <query> [<server>]
 	WhoisServer string
 	WhoisBoth   bool
@@ -148,6 +151,7 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            run on Enter; sync: resync now (as admin); fix: set it to keep in sync\n")
 	fmt.Fprintf(&b, "                            (refused on a Windows PC on a domain: it takes its time from the domain)\n")
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
+	fmt.Fprintf(&b, "       %s install <version> download that release (0.3.1; older ones too), check it, and install it\n", prog)
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
 	fmt.Fprintf(&b, "\ntests (letters together, any of them; none: all three):\n")
@@ -345,6 +349,11 @@ var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "
 
 const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, rdap, time native, install, upgrade"
 
+// InstallUse is how install is written.
+const InstallUse = "install [<version>]: this dpt, or that release (0.3.1, v0.3.1), older ones too"
+
+var releaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+[0-9]*)?$`)
+
 // TimeUse is how time is written.
 const TimeUse = "time [<host>] | time native [sync [fix]]: this clock (and host's NTP) against the references;\n" +
 	"  native: the system's own time tools; sync: resync now; sync fix: set the system to keep in sync"
@@ -422,6 +431,20 @@ func (c *DPTCommand) words(pos []string) error {
 			return errors.New("trace <host>")
 		}
 		c.Target = rest[0]
+	case "install":
+		if len(rest) > 1 {
+			return errors.New(InstallUse)
+		}
+		if len(rest) == 1 {
+			v := strings.ToLower(rest[0])
+			if !strings.HasPrefix(v, "v") {
+				v = "v" + v
+			}
+			if !releaseTag.MatchString(v) {
+				return fmt.Errorf("install: %q is not a release version (%s)", Printable(rest[0]), InstallUse)
+			}
+			c.InstallVersion = v
+		}
 	case "time":
 		var words []string
 		for _, w := range rest {
