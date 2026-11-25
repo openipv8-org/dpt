@@ -58,8 +58,12 @@ type WhoisReport struct {
 	Registry string `json:"registry,omitempty"` // ARIN, RIPE NCC, Verisign...
 	Server   string `json:"server,omitempty"`
 	URL      string `json:"url,omitempty"`
-	// NoRDAP says why the answer is whois, not RDAP
+	// NoRDAP: there is no RDAP server for it (IANA's list)
 	NoRDAP string `json:"no_rdap,omitempty"`
+	// AlsoRDAP: whois was asked, and this RDAP server has it too;
+	// AlsoWhois: RDAP was asked, and the registry names this whois server
+	AlsoRDAP  string `json:"rdap_server_too,omitempty"`
+	AlsoWhois string `json:"whois_server_too,omitempty"`
 	// Chosen: the server was given, not found through IANA
 	Chosen bool `json:"server_given,omitempty"`
 	Found  bool `json:"found"`
@@ -112,16 +116,28 @@ type WhoisContact struct {
 }
 
 // WhoisUse is how whois is written.
-const WhoisUse = "whois <address | network | AS number | domain> [<server>]: 1.1.1.1, 2001:db8::/32, AS13335, example.com;\n" +
-	"  server: ask that whois server (whois.godaddy.com) or RDAP server (https://rdap.arin.net/registry/) only"
+const WhoisUse = "whois <address | network | AS number | domain> [<server>] [both]: 1.1.1.1, 2001:db8::/32, AS13335, example.com;\n" +
+	"  server: ask that whois server only (whois.godaddy.com); both: and RDAP, the two answers one after the other"
 
-// CheckWhoisServer says whether s can be a server for whois to ask.
-func CheckWhoisServer(s string) error {
-	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
-		if u, err := url.Parse(s); err == nil && u.Host != "" {
-			return nil
+// RDAPUse is how rdap is written.
+const RDAPUse = "rdap <address | network | AS number | domain> [<server>]: 1.1.1.1, 2001:db8::/32, AS13335, example.com;\n" +
+	"  server: ask that RDAP server only (https://rdap.arin.net/registry/)"
+
+// CheckLookupServer says whether s can be a server for whois (a host,
+// host:port) or rdap (https://...) to ask.
+func CheckLookupServer(rdap bool, s string) error {
+	web := strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://")
+	if rdap {
+		if !web {
+			return fmt.Errorf("rdap: %q: an RDAP server is https://... (https://rdap.arin.net/registry/); a whois server: dpt whois", Printable(s))
 		}
-		return fmt.Errorf("whois: %q is not an RDAP server's address", Printable(s))
+		if u, err := url.Parse(s); err != nil || u.Host == "" {
+			return fmt.Errorf("rdap: %q is not an RDAP server's address", Printable(s))
+		}
+		return nil
+	}
+	if web {
+		return fmt.Errorf("whois: %q is an RDAP server: dpt rdap asks it", Printable(s))
 	}
 	host := s
 	if h, p, err := net.SplitHostPort(s); err == nil {
@@ -133,7 +149,7 @@ func CheckWhoisServer(s string) error {
 	if _, err := netip.ParseAddr(host); err == nil || ValidName(host, false) {
 		return nil
 	}
-	return fmt.Errorf("whois: %q is not a server (whois.godaddy.com, or https://... for RDAP)", Printable(s))
+	return fmt.Errorf("whois: %q is not a whois server (whois.godaddy.com)", Printable(s))
 }
 
 // whoisQuery is a question, read: kind and what is asked.
@@ -210,17 +226,38 @@ func whoisSpecial(a netip.Addr) string {
 	return ""
 }
 
-// RunWhois finds who holds q: RDAP first, whois where there is none.
+// RunWhois asks whois (port 43): IANA, the server it refers to, then one
+// referral from there; or the server given.  It notes whether RDAP has
+// it too (IANA's list of RDAP servers: no RDAP question is asked).
 func RunWhois(ctx context.Context, query string, o WhoisOptions) (*WhoisReport, error) {
+	return runLookup(ctx, query, o, false)
+}
+
+// RunRDAP asks RDAP: the server IANA's list names, or the server given.
+// It notes the whois server the registry names (its port43).
+func RunRDAP(ctx context.Context, query string, o WhoisOptions) (*WhoisReport, error) {
+	return runLookup(ctx, query, o, true)
+}
+
+func runLookup(ctx context.Context, query string, o WhoisOptions, rdap bool) (*WhoisReport, error) {
 	q, err := ParseWhoisQuery(query)
 	if err != nil {
 		return nil, err
+	}
+	if o.Server != "" {
+		if err := CheckLookupServer(rdap, o.Server); err != nil {
+			return nil, err
+		}
 	}
 	if o.Timeout <= 0 {
 		o.Timeout = 10 * time.Second
 	}
 	start := time.Now()
-	r := &WhoisReport{Query: query, Kind: q.kind, Asked: q.asked()}
+	r := &WhoisReport{Query: query, Kind: q.kind, Asked: q.asked(), Source: "whois"}
+	cmd := "whois"
+	if rdap {
+		r.Source, cmd = "RDAP", "rdap"
+	}
 	defer func() { r.Elapsed = ms(time.Since(start)) }()
 	if q.kind == "address" || q.kind == "network" {
 		if s := whoisSpecial(q.addr); s != "" {
@@ -231,39 +268,49 @@ func RunWhois(ctx context.Context, query string, o WhoisOptions) (*WhoisReport, 
 	cl := whoisHTTP(o)
 	defer cl.CloseIdleConnections()
 
-	if o.Server != "" {
-		return whoisChosen(ctx, cl, q, r, o)
+	if !rdap {
+		if o.Server != "" {
+			err = whoisChosen(ctx, q, r, o)
+		} else {
+			err = whoisAsk(ctx, q, r, o)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("whois %s: %v", r.Asked, err)
+		}
+		// RDAP too?  IANA's list says, with no question to the registry
+		o.Live.Set("whois", "asking IANA whether RDAP has "+r.Asked)
+		if bases, err := rdapBases(ctx, cl, q); err == nil {
+			if len(bases) > 0 {
+				r.AlsoRDAP = urlHost(bases[0])
+			} else {
+				r.NoRDAP = "no RDAP server for " + q.where() + " in IANA's list"
+			}
+		}
+		return r, nil
 	}
-	o.Live.Set("whois", "asking IANA which registry holds "+r.Asked)
-	bases, err := rdapBases(ctx, cl, q)
-	switch {
-	case err != nil:
-		r.NoRDAP = "IANA's list of RDAP servers: " + err.Error()
-	case len(bases) == 0:
-		r.NoRDAP = "no RDAP server for " + q.where() + " in IANA's list"
-	default:
-		why, ok := rdapAsk(ctx, cl, q, bases, r, o)
-		if ok {
+
+	bases := []string{o.Server}
+	if o.Server != "" {
+		r.Chosen = true
+	} else {
+		o.Live.Set(cmd, "asking IANA which registry holds "+r.Asked)
+		if bases, err = rdapBases(ctx, cl, q); err != nil {
+			return nil, fmt.Errorf("rdap %s: IANA's list of RDAP servers: %v", r.Asked, err)
+		}
+		if len(bases) == 0 {
+			r.NoRDAP = "no RDAP server for " + q.where() + " in IANA's list"
 			return r, nil
 		}
-		r.NoRDAP = why
 	}
-	// plain whois
-	if err := whoisAsk(ctx, q, r, o); err != nil {
-		return nil, fmt.Errorf("whois %s: RDAP: %s; whois: %v", r.Asked, r.NoRDAP, err)
+	if why, ok := rdapAsk(ctx, cl, q, bases, r, o); !ok {
+		return nil, fmt.Errorf("rdap %s: %s", r.Asked, why)
 	}
 	return r, nil
 }
 
-// whoisChosen asks the server given, and only it.
-func whoisChosen(ctx context.Context, cl *http.Client, q whoisQuery, r *WhoisReport, o WhoisOptions) (*WhoisReport, error) {
+// whoisChosen asks the whois server given, and only it.
+func whoisChosen(ctx context.Context, q whoisQuery, r *WhoisReport, o WhoisOptions) error {
 	r.Chosen = true
-	if strings.HasPrefix(o.Server, "https://") || strings.HasPrefix(o.Server, "http://") {
-		if why, ok := rdapAsk(ctx, cl, q, []string{o.Server}, r, o); !ok {
-			return nil, fmt.Errorf("whois %s: RDAP: %s", r.Asked, why)
-		}
-		return r, nil
-	}
 	server := o.Server
 	if _, _, err := net.SplitHostPort(server); err != nil {
 		server = net.JoinHostPort(strings.Trim(server, "[]"), "43")
@@ -274,13 +321,13 @@ func whoisChosen(ctx context.Context, cl *http.Client, q whoisQuery, r *WhoisRep
 	o.Live.Set("whois", "asking "+server)
 	t, err := whoisTCP(ctx, server, whoisLine(server, r.Asked), o)
 	if err != nil {
-		return nil, fmt.Errorf("whois %s: %s: %v", r.Asked, server, err)
+		return fmt.Errorf("%s: %v", server, err)
 	}
 	r.Source, r.Text, r.Asks = "whois", t, []string{server}
 	r.Server = strings.TrimSuffix(server, ":43")
 	r.Registry = registryName(r.Server)
 	r.fromWhoisText(t)
-	return r, nil
+	return nil
 }
 
 // asked is the question as a registry is asked it.
@@ -452,6 +499,7 @@ type rdapObj struct {
 		Href string `json:"href"`
 		Type string `json:"type"`
 	} `json:"links"`
+	Port43      string   `json:"port43"`
 	ErrorCode   int      `json:"errorCode"`
 	Title       string   `json:"title"`
 	Description []string `json:"description"`
@@ -584,6 +632,9 @@ func registryName(host string) string {
 // fromRDAP fills the report from an RDAP answer.
 func (r *WhoisReport) fromRDAP(obj *rdapObj) {
 	r.Handle, r.Name, r.Type, r.Country = Safe(obj.Handle), Safe(obj.Name), Safe(obj.Type), Safe(obj.Country)
+	if p := strings.TrimSpace(Safe(obj.Port43)); p != "" && !strings.ContainsAny(p, " /") {
+		r.AlsoWhois = strings.ToLower(p)
+	}
 	if obj.ObjectClassName == "domain" {
 		r.Name = strings.ToLower(Safe(obj.LdhName))
 		if obj.UnicodeName != "" && !strings.EqualFold(obj.UnicodeName, obj.LdhName) {
@@ -958,7 +1009,7 @@ func (r *WhoisReport) fromWhoisText(text string) {
 			continue
 		}
 		switch k {
-		case "orgname", "org-name", "organization", "organisation", "registrant organization", "registrant", "owner", "registrant name":
+		case "orgname", "org-name", "organization", "registrant organization", "registrant", "owner", "registrant name":
 			first(&r.Holder, v)
 		case "netname", "asname", "domain name", "domain":
 			if k == "domain name" || k == "domain" {

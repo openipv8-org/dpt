@@ -52,6 +52,8 @@ fi
 $SUDO mkdir -p "$DEST"
 $SUDO install -m 755 "$TMP/$BIN" "$DEST/dpt"
 echo "installed: $("$DEST/dpt" --version) in $DEST/dpt"
+# the manual page, which dpt carries in itself (man dpt)
+if $SUDO "$DEST/dpt" install >/dev/null; then echo "manual page: /usr/local/share/man/man1/dpt.1 (man dpt)"; else echo "manual page: not installed (sudo dpt install puts it in place)"; fi
 case ":$PATH:" in
 	*":$DEST:"*) ;;
 	*) echo "note: $DEST is not on your PATH" ;;

@@ -11,7 +11,8 @@
 //	dpt connect <host> <port> [tls|notls]    connect, see what it says, type to it
 //	dpt trace <host>                         the routers on the way
 //	dpt outside-ip                           the address the internet sees
-//	dpt whois <address|network|AS|domain> [<server>]   who holds it: RDAP, else whois
+//	dpt whois <address|network|AS|domain> [<server>] [both]   who holds it, by whois (port 43)
+//	dpt rdap <address|network|AS|domain> [<server>]   who holds it, by RDAP
 //	dpt time native [sync [fix]]             the system's own time tools, a resync, set to keep in sync
 //	dpt                                      interactive shell: nslookup and more
 //
@@ -42,6 +43,7 @@ import (
 	"openipv8.org/dpt/internal/shell"
 	"openipv8.org/dpt/internal/sysdns"
 	"openipv8.org/dpt/internal/timenative"
+	"openipv8.org/dpt/man"
 )
 
 var version = "dev"
@@ -175,9 +177,35 @@ func run(args []string) int {
 		return runInstall(ctx, c.Mode, args, color)
 
 	case "time":
-		return runTimeNative(ctx, c, args, color, relayed)
+		if c.TimeNative {
+			return runTimeNative(ctx, c, args, color, relayed)
+		}
+		// time [<host>]: this clock (and host's NTP) against the references
+		if err := firstErr(mel.Interface(true), mel.UDP()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitMEL
+		}
+		o := c.Opts.DPTOptions
+		if !c.JSON {
+			o.Live = live()
+		}
+		var extra []dpt.DPTTimeAsk
+		if c.Target != "" {
+			extra = []dpt.DPTTimeAsk{{Server: c.Target, Role: "target"}}
+		}
+		t := dpt.DPTTimeRun(ctx, extra, o)
+		o.Live.Stop()
+		if c.JSON {
+			dpt.DPTJSON(os.Stdout, t)
+		} else {
+			dpt.RenderDPTTime(os.Stdout, t, color)
+		}
+		if t.Status == dpt.DPTFail {
+			return exitFail
+		}
+		return exitOK
 
-	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "rdap":
 		if err := mel.Interface(true); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
@@ -318,7 +346,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitFail
 		}
-		if selfinstall.SameFile(self, dest) {
+		if selfinstall.SameFile(self, dest) && selfinstall.ManCurrent(man.Page) {
 			fmt.Printf("dpt %s is installed: %s\n", version, dest)
 			return exitOK
 		}
@@ -340,7 +368,7 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			return exitOK
 		}
 	}
-	if !selfinstall.Writable(dest) {
+	if !selfinstall.Writable(dest) || mode == "install" && selfinstall.ManPath() != "" && !selfinstall.Writable(selfinstall.ManPath()) {
 		// typed by a person: ask for the privilege; from a script: never
 		if elevate.Possible() && elevate.Interactive() {
 			code, err := elevate.Run(mode, args, color)
@@ -355,11 +383,22 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 	}
 	switch mode {
 	case "install":
-		if err := selfinstall.Install(self, dest); err != nil {
-			fmt.Fprintln(os.Stderr, "dpt: install:", err)
-			return exitFail
+		if selfinstall.SameFile(self, dest) {
+			fmt.Printf("dpt %s is installed: %s\n", version, dest)
+		} else {
+			if err := selfinstall.Install(self, dest); err != nil {
+				fmt.Fprintln(os.Stderr, "dpt: install:", err)
+				return exitFail
+			}
+			fmt.Printf("installed dpt %s: %s\n", version, dest)
 		}
-		fmt.Printf("installed dpt %s: %s\n", version, dest)
+		if !selfinstall.ManCurrent(man.Page) {
+			if err := selfinstall.InstallMan(man.Page); err != nil {
+				fmt.Fprintf(os.Stderr, "dpt: the manual page was not installed: %v\n", err)
+			} else {
+				fmt.Printf("installed the manual page: %s (man dpt)\n", selfinstall.ManPath())
+			}
+		}
 	case "upgrade":
 		file, err := selfinstall.Download(ctx, latest, filepath.Dir(dest), os.Stdout)
 		if err != nil {
@@ -375,6 +414,12 @@ func runInstall(ctx context.Context, mode string, args []string, color bool) int
 			have = "none"
 		}
 		fmt.Printf("upgraded %s: %s -> %s\n", dest, have, latest)
+		// the new dpt puts its own manual page in place
+		if selfinstall.ManPath() != "" {
+			x := exec.CommandContext(ctx, dest, "install")
+			x.Stdout, x.Stderr = os.Stdout, os.Stderr
+			x.Run()
+		}
 	}
 	if added, err := selfinstall.AddToPath(filepath.Dir(dest)); err != nil {
 		fmt.Fprintf(os.Stderr, "dpt: could not add %s to PATH: %v\n", filepath.Dir(dest), err)
@@ -605,20 +650,36 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		return exitOK
 
-	case "whois":
-		r, err := dpt.RunWhois(ctx, c.Target, dpt.WhoisOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family,
-			Agent: "dpt " + version, Server: c.WhoisServer, Live: l})
-		l.Stop()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "dpt:", err)
-			return exitFail
-		}
+	case "whois", "rdap":
 		more := "--verbose"
 		if runtime.GOOS == "windows" {
 			more = "/verbose"
 		}
-		out(r, func() { dpt.RenderWhois(os.Stdout, r, color, c.Verbose, more) })
-		if !r.Found && r.Special == "" {
+		o := dpt.WhoisOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family, Agent: "dpt " + version, Server: c.WhoisServer, Live: l}
+		rs, errs := lookups(ctx, c, o)
+		l.Stop()
+		if c.JSON {
+			if c.WhoisBoth {
+				dpt.DPTJSON(os.Stdout, map[string]any{"whois": rs[0], "rdap": rs[1], "errors": errs})
+			} else if rs[0] != nil {
+				dpt.DPTJSON(os.Stdout, rs[0])
+			}
+		}
+		found := false
+		for i, r := range rs {
+			if errs[i] != "" {
+				fmt.Fprintln(os.Stderr, "dpt:", errs[i])
+				continue
+			}
+			if !c.JSON {
+				if i > 0 {
+					fmt.Println()
+				}
+				dpt.RenderWhois(os.Stdout, r, color, c.Verbose, more, "dpt ")
+			}
+			found = found || r.Found || r.Special != ""
+		}
+		if !found {
 			return exitFail
 		}
 		return exitOK
@@ -677,6 +738,28 @@ func timeNative(ctx context.Context, c *dpt.DPTCommand, args []string, color, re
 		}
 	}
 	return timenative.Run(ctx, p, o)
+}
+
+// lookups runs whois, rdap, or (whois both) the two; errs[i] is why
+// rs[i] is missing.
+func lookups(ctx context.Context, c *dpt.DPTCommand, o dpt.WhoisOptions) ([]*dpt.WhoisReport, []string) {
+	run := []func(context.Context, string, dpt.WhoisOptions) (*dpt.WhoisReport, error){dpt.RunWhois}
+	switch {
+	case c.Mode == "rdap":
+		run = run[:0]
+		run = append(run, dpt.RunRDAP)
+	case c.WhoisBoth:
+		run = append(run, dpt.RunRDAP)
+	}
+	rs, errs := make([]*dpt.WhoisReport, len(run)), make([]string, len(run))
+	for i, f := range run {
+		r, err := f(ctx, c.Target, o)
+		rs[i] = r
+		if err != nil {
+			errs[i] = err.Error()
+		}
+	}
+	return rs, errs
 }
 
 // stdinHasData: stdin is a pipe or a file, not /dev/null or a console

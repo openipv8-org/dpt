@@ -8,28 +8,39 @@ import (
 	"strings"
 )
 
-// RenderWhois writes what whois found:
+// RenderWhois writes what whois or rdap found:
 //
-//	WHOIS     1.1.1.1
+//	RDAP      1.1.1.1
 //	SOURCE    RDAP  APNIC  rdap.apnic.net  in 412 ms
 //	HOLDER    APNIC Research and Development
 //	NETWORK   APNIC-LABS  1.1.1.0 - 1.1.1.255  1.1.1.0/24  AU
 //	ABUSE     helpdesk@apnic.net
 //	DATES     registered 2011-08-10   changed 2023-04-26
+//	ALSO      whois has it too: whois.apnic.net   (dpt whois 1.1.1.1)
 //
-// verbose adds every contact and remark, and a whois answer's text;
-// without it, a last line says so, naming more (--verbose, /verbose).
-func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) {
+// A whois answer's text follows its summary.  verbose adds RDAP's every
+// contact and remark; without it, a last line says so, naming more
+// (--verbose, /verbose).  prefix comes before a command shown ("dpt ").
+func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more, prefix string) {
 	o := dptOut{w: w, color: color} // one block: no blank line between sections
 	head := o.bold(r.Query)
 	if r.Asked != "" && !strings.EqualFold(r.Asked, r.Query) {
 		head += o.dim("  asked as " + r.Asked)
 	}
-	o.line("WHOIS", head)
+	label := "WHOIS"
+	if r.Source == "RDAP" {
+		label = "RDAP"
+	}
+	o.line(label, head)
 
 	if r.Special != "" {
 		o.line("RANGE", r.Special)
 		o.line("", o.dim("no registry holds it, so none was asked"))
+		return
+	}
+	if r.Source == "RDAP" && r.NoRDAP != "" && !r.Found && r.Server == "" {
+		o.line("NO RDAP", o.yellow(r.NoRDAP))
+		o.line("", "whois has it: "+o.bold(prefix+"whois "+r.Query))
 		return
 	}
 
@@ -49,15 +60,11 @@ func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) 
 	if r.Chosen {
 		o.line("", o.dim("the server given, asked directly (not the one IANA lists)"))
 	}
-	if r.Source == "whois" && !r.Chosen {
-		o.line("", o.yellow("not in RDAP: ")+r.NoRDAP)
-		o.line("", o.dim("the summary is read from the text, which each registry writes its own way"))
+	if r.Source == "whois" {
 		if len(r.Asks) > 1 {
 			o.line("", o.dim("asked "+strings.ReplaceAll(strings.Join(r.Asks, ", then "), ":43", "")))
 		}
-	}
-	if r.Source == "whois" && r.Chosen {
-		o.line("", o.dim("the summary is read from the text, which each registry writes its own way"))
+		o.line("", o.dim("the summary is read from the text below, which each registry writes its own way"))
 	} else if r.URL != "" && verbose {
 		o.line("", o.dim(r.URL))
 	}
@@ -68,7 +75,8 @@ func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) 
 			what = r.Asked + " is not registered at " + whoisWho(r) + " (it may be free to register)"
 		}
 		o.line("NOT FOUND", o.yellow(what))
-		if r.Source == "whois" && verbose {
+		renderAlso(o, r, prefix)
+		if r.Source == "whois" {
 			renderWhoisText(o, r.Text)
 		}
 		return
@@ -129,6 +137,12 @@ func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) 
 		}
 		o.line("DATES", strings.Join(ev, "   "))
 	}
+	renderAlso(o, r, prefix)
+
+	if r.Source == "whois" {
+		renderWhoisText(o, r.Text)
+		return
+	}
 
 	remarks := r.Remarks
 	if !verbose && len(remarks) > 3 {
@@ -144,7 +158,6 @@ func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) 
 			sec = ""
 		}
 	}
-
 	if verbose {
 		if len(r.Contacts) > 0 {
 			fmt.Fprintln(o.w)
@@ -157,17 +170,20 @@ func RenderWhois(w io.Writer, r *WhoisReport, color, verbose bool, more string) 
 				}
 			}
 		}
-		if r.Source == "whois" {
-			renderWhoisText(o, r.Text)
-		}
-	} else {
-		what := "every contact and remark"
-		if r.Source == "whois" {
-			what = "the whole answer"
-		}
-		if more != "" {
-			fmt.Fprintln(o.w, o.dim(fmt.Sprintf("\n(%s: %s)", more, what)))
-		}
+	} else if more != "" {
+		fmt.Fprintln(o.w, o.dim(fmt.Sprintf("\n(%s: every contact and remark)", more)))
+	}
+}
+
+// renderAlso says whether the other protocol has it too.
+func renderAlso(o dptOut, r *WhoisReport, prefix string) {
+	switch {
+	case r.Source == "whois" && r.AlsoRDAP != "":
+		o.line("ALSO", "RDAP has it too: "+r.AlsoRDAP+o.dim("   ("+prefix+"rdap "+r.Query+")"))
+	case r.Source == "whois" && r.NoRDAP != "":
+		o.line("ALSO", o.dim("no RDAP: "+r.NoRDAP))
+	case r.Source == "RDAP" && r.AlsoWhois != "":
+		o.line("ALSO", "whois has it too: "+r.AlsoWhois+o.dim("   ("+prefix+"whois "+r.Query+")"))
 	}
 }
 

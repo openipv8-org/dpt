@@ -248,8 +248,8 @@ func (s *Shell) Do(line string) bool {
 		s.trace(args)
 	case cmd == "outside-ip":
 		s.outsideIP()
-	case cmd == "whois":
-		s.whois(args)
+	case cmd == "whois" || cmd == "rdap":
+		s.whois(cmd, args)
 	default:
 		// a lookup: <name> or <name> <server>
 		if len(f) > 2 {
@@ -326,10 +326,13 @@ dpt:
                           server says first; then type to it (Ctrl-D or Ctrl-C to close)
   trace [host]            the routers on the way, each hop asked 3 times, with times and loss
   outside-ip              the address the internet sees (asks ifconfig.me)
-  whois [what] [server]   who holds an address, network, AS number or domain (default the
-                          server): RDAP where it is, else whois; says which answered.
-                          server: ask that whois server (whois.godaddy.com) or RDAP one (https://...)
-                          only. whois <what> -v: every contact and remark, the whole whois text
+  whois [what] [server | both]
+                          who holds an address, network, AS number or domain (default the
+                          server), by whois (port 43): the summary and the registry's text; says
+                          whether RDAP has it too. server: ask that whois server only
+                          (whois.godaddy.com); both: and RDAP, one answer after the other
+  rdap [what] [server]    the same by RDAP (the registry's JSON); says whether whois has it too.
+                          server: that RDAP server only (https://...). -v: every contact and remark
   Tab completes commands, options and names
   help, ?                 this list
 `)

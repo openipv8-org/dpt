@@ -125,7 +125,7 @@ you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
 to let dpt choose); trydhcp and info then use it. From a script
 --select never asks: use `--iface`.
 
-## SMTP, sweep, ports, connect, trace, whois, time native, outside-ip
+## SMTP, sweep, ports, connect, trace, whois, rdap, time, outside-ip
 
 `dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start), 587
 (STARTTLS), and 2525 and 8025 (STARTTLS; providers like smtp2go offer them
@@ -232,36 +232,43 @@ WARN. Some NATs (VirtualBox's) answer echoes on the address's behalf;
 then the address answers at hop 1 and dpt says the routers cannot be
 seen from here.
 
-`dpt whois <address | network | AS number | domain>` says who holds it.
-It asks RDAP first: IANA's lists say which registry's RDAP server holds
-it, and the answer is JSON, so every registry's is read and shown the
-same way. Where there is no RDAP server (some country domains: .de,
-.io, .jp...) or it does not answer, it asks whois (port 43): IANA, the
-server IANA refers to, then one referral from there (an RIR's, a
-domain's registrar). The first line says which answered:
+`dpt whois <address | network | AS number | domain>` says who holds it,
+by whois (port 43), as the whois of Linux and macOS does (Windows has
+none): IANA, the server IANA refers to, then one referral from there (an
+RIR's, a domain's registrar). It shows a summary read from the
+registry's text (holder, network or AS, abuse contact, dates; for a
+domain its registrar, status, name servers, DNSSEC), then the text
+itself, and says whether RDAP has it too:
 
 ```
 $ dpt whois 1.1.1.1
 WHOIS     1.1.1.1
-SOURCE    RDAP  APNIC  rdap.apnic.net  in 1.2 s
+SOURCE    whois  APNIC  whois.apnic.net  in 1.5 s
+          asked whois.iana.org, then whois.apnic.net
 HOLDER    APNIC Research and Development
 NETWORK   APNIC-LABS  1.1.1.0 - 1.1.1.255  1.1.1.0/24  AU
 ABUSE     helpdesk@apnic.net
-DATES     registered 2011-08-10   changed 2023-04-26
+ALSO      RDAP has it too: rdap.apnic.net   (dpt rdap 1.1.1.1)
+
+TEXT      % [whois.apnic.net]
+          ...
 ```
 
-A whois answer is text that each registry writes its own way; dpt reads
-the same summary from it and says so (`not in RDAP: no RDAP server for
-.de in IANA's list`). A domain shows its registrar, status, name
-servers, DNSSEC and dates; for `www.example.com` it asks for
-`example.com`, and then the registrar's own RDAP server, which holds the
-registrant. A private or documentation address is named as such, and no
-registry is asked. `dpt whois example.com whois.godaddy.com` asks that
-server only (`https://...` for an RDAP server), as `whois -h` does.
-`--verbose` adds every contact and remark, and a whois answer's text;
-`--json` gives the summary and the registry's RDAP answer itself.
-Windows has no whois of its own; this is the same on all six systems.
+`dpt rdap <...>` asks RDAP, whois' successor: IANA's lists say which
+registry's RDAP server holds it, and the answer is JSON, read the same
+way from every registry. A domain's registrar is asked after its
+registry; for `www.example.com` it asks for `example.com`. It says
+whether whois has it too, and when there is no RDAP server for it
+(some country domains: .de, .io, .jp). `dpt whois <...> both` asks both
+and shows the two answers one after the other: they do not always agree.
+A server after the question asks that one only: `dpt whois example.com
+whois.godaddy.com` (as `whois -h` does), `dpt rdap 8.8.8.8
+https://rdap.arin.net/registry/`. A private or documentation address is
+named as such, and no registry is asked. `--verbose` adds RDAP's every
+contact and remark; `--json` gives the summary and RDAP's own answer.
 
+`dpt time` checks this machine's clock against the reference servers,
+and `dpt time <host>` that host's NTP time beside them.
 `dpt time native` runs the system's own time tools, so what they say can
 be set beside dpt's measurement: `w32tm /query /status` and
 `w32tm /stripchart` against time.cloudflare.com, time.google.com and

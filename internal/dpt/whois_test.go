@@ -42,15 +42,23 @@ func TestParseWhoisQuery(t *testing.T) {
 	}
 }
 
-func TestCheckWhoisServer(t *testing.T) {
-	for _, ok := range []string{"whois.godaddy.com", "whois.example.net:4343", "192.0.2.1", "https://rdap.arin.net/registry/"} {
-		if err := CheckWhoisServer(ok); err != nil {
-			t.Errorf("%q: %v", ok, err)
+func TestCheckLookupServer(t *testing.T) {
+	for _, ok := range []string{"whois.godaddy.com", "whois.example.net:4343", "192.0.2.1"} {
+		if err := CheckLookupServer(false, ok); err != nil {
+			t.Errorf("whois %q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"bad server!", "host:99999", "https://"} {
-		if err := CheckWhoisServer(bad); err == nil {
-			t.Errorf("%q: no error", bad)
+	if err := CheckLookupServer(true, "https://rdap.arin.net/registry/"); err != nil {
+		t.Error(err)
+	}
+	for _, bad := range []string{"bad server!", "host:99999", "https://rdap.arin.net/"} {
+		if err := CheckLookupServer(false, bad); err == nil {
+			t.Errorf("whois %q: no error", bad)
+		}
+	}
+	for _, bad := range []string{"whois.godaddy.com", "https://"} {
+		if err := CheckLookupServer(true, bad); err == nil {
+			t.Errorf("rdap %q: no error", bad)
 		}
 	}
 }
@@ -89,7 +97,7 @@ func TestWhoisSpecial(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 	var b bytes.Buffer
-	RenderWhois(&b, r, false, false, "--verbose")
+	RenderWhois(&b, r, false, false, "--verbose", "dpt ")
 	if !strings.Contains(b.String(), "no registry holds it") {
 		t.Error(b.String())
 	}
@@ -112,7 +120,7 @@ func fakeRDAP(t *testing.T) *httptest.Server {
 		case "/reg/ip/198.51.200.7":
 			w.Header().Set("Content-Type", "application/rdap+json")
 			fmt.Fprint(w, `{"objectClassName":"ip network","handle":"NET-1","name":"EXAMPLE-NET",
-				"startAddress":"198.51.200.0","endAddress":"198.51.200.255","country":"NZ",
+				"startAddress":"198.51.200.0","endAddress":"198.51.200.255","country":"NZ","port43":"whois.example.test",
 				"cidr0_cidrs":[{"v4prefix":"198.51.200.0","length":24}],
 				"events":[{"eventAction":"last changed","eventDate":"2024-03-01T00:00:00Z"},
 				          {"eventAction":"registration","eventDate":"2011-08-10T23:12:35Z"},
@@ -177,13 +185,16 @@ func TestRunWhoisRDAP(t *testing.T) {
 	withFakes(t, srv.URL+"/boot/", "127.0.0.1:1")
 	ctx := context.Background()
 
-	r, err := RunWhois(ctx, "198.51.200.7", WhoisOptions{Timeout: 5 * time.Second})
+	r, err := RunRDAP(ctx, "198.51.200.7", WhoisOptions{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Source != "RDAP" || !r.Found || r.Holder != "Example Org" || r.Range != "198.51.200.0 - 198.51.200.255" ||
 		len(r.CIDRs) != 1 || r.CIDRs[0] != "198.51.200.0/24" || r.Country != "NZ" {
 		t.Errorf("%+v", r)
+	}
+	if r.AlsoWhois != "whois.example.test" {
+		t.Errorf("port43 %q", r.AlsoWhois)
 	}
 	if len(r.Abuse) != 1 || r.Abuse[0] != "abuse@example.test" {
 		t.Errorf("abuse %v (a fax is no abuse contact)", r.Abuse)
@@ -195,16 +206,17 @@ func TestRunWhoisRDAP(t *testing.T) {
 		t.Errorf("remarks %q: escapes from the network must go", r.Remarks)
 	}
 	var b bytes.Buffer
-	RenderWhois(&b, r, false, false, "--verbose")
+	RenderWhois(&b, r, false, false, "--verbose", "dpt ")
 	for _, want := range []string{"SOURCE    RDAP", "HOLDER    Example Org", "NETWORK   EXAMPLE-NET  198.51.200.0 - 198.51.200.255  198.51.200.0/24  NZ",
-		"ABUSE     abuse@example.test", "registered 2011-08-10   changed 2024-03-01", "(--verbose: every contact and remark)"} {
+		"ABUSE     abuse@example.test", "registered 2011-08-10   changed 2024-03-01", "(--verbose: every contact and remark)",
+		"RDAP      198.51.200.7", "ALSO      whois has it too: whois.example.test   (dpt whois 198.51.200.7)"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("no %q in\n%s", want, b.String())
 		}
 	}
 
 	// a domain: www. is not held, the shorter name is; then the registrar
-	d, err := RunWhois(ctx, "www.dpt.test", WhoisOptions{Timeout: 5 * time.Second})
+	d, err := RunRDAP(ctx, "www.dpt.test", WhoisOptions{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,23 +227,37 @@ func TestRunWhoisRDAP(t *testing.T) {
 	}
 
 	// not registered: an answer, not a reason to ask whois
-	n, err := RunWhois(ctx, "free.test", WhoisOptions{Timeout: 5 * time.Second})
+	n, err := RunRDAP(ctx, "free.test", WhoisOptions{Timeout: 5 * time.Second})
 	if err != nil || n.Found || n.Source != "RDAP" {
 		t.Fatalf("%+v %v", n, err)
 	}
 	b.Reset()
-	RenderWhois(&b, n, false, false, "")
+	RenderWhois(&b, n, false, false, "", "dpt ")
 	if !strings.Contains(b.String(), "free.test is not registered") {
 		t.Error(b.String())
 	}
 
-	a, err := RunWhois(ctx, "AS64500", WhoisOptions{Timeout: 5 * time.Second})
+	a, err := RunRDAP(ctx, "AS64500", WhoisOptions{Timeout: 5 * time.Second})
 	if err != nil || a.ASNs != "AS64500" || a.Name != "DPT-AS" {
 		t.Errorf("%+v %v", a, err)
 	}
 }
 
-func TestRunWhoisFallback(t *testing.T) {
+func TestRunRDAPNoServer(t *testing.T) {
+	srv := fakeRDAP(t)
+	withFakes(t, srv.URL+"/boot/", "127.0.0.1:1")
+	r, err := RunRDAP(context.Background(), "2600::1", WhoisOptions{Timeout: 5 * time.Second})
+	if err != nil || r.Found || !strings.Contains(r.NoRDAP, "no RDAP server") {
+		t.Fatalf("%+v %v", r, err)
+	}
+	var b bytes.Buffer
+	RenderWhois(&b, r, false, false, "", "dpt ")
+	if !strings.Contains(b.String(), "NO RDAP") || !strings.Contains(b.String(), "whois has it: dpt whois 2600::1") {
+		t.Error(b.String())
+	}
+}
+
+func TestRunWhois(t *testing.T) {
 	srv := fakeRDAP(t)
 	var asked []string
 	reg := fakeWhois(t, func(q string) string {
@@ -245,7 +271,7 @@ func TestRunWhoisFallback(t *testing.T) {
 	})
 	withFakes(t, srv.URL+"/boot/", iana)
 
-	// IPv6: the fake bootstrap lists no server, so whois
+	// IPv6: whois; the fake bootstrap lists no RDAP server for it
 	r, err := RunWhois(context.Background(), "2600::1", WhoisOptions{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -261,11 +287,23 @@ func TestRunWhoisFallback(t *testing.T) {
 		t.Errorf("asked %v, asks %v", asked, r.Asks)
 	}
 	var b bytes.Buffer
-	RenderWhois(&b, r, false, true, "")
-	for _, want := range []string{"SOURCE    whois", "not in RDAP: no RDAP server", "read from the text", "TEXT      % a comment"} {
+	RenderWhois(&b, r, false, true, "", "dpt ")
+	for _, want := range []string{"WHOIS     2600::1", "SOURCE    whois", "ALSO      no RDAP: no RDAP server", "read from the text", "TEXT      % a comment"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("no %q in\n%s", want, b.String())
 		}
+	}
+
+	// an address RDAP has too: whois says so, and asks RDAP nothing
+	asked = nil
+	v4, err := RunWhois(context.Background(), "198.51.200.7", WhoisOptions{Timeout: 5 * time.Second})
+	if err != nil || v4.Source != "whois" || v4.AlsoRDAP != "127.0.0.1" || v4.Holder != "Fallback Org" {
+		t.Errorf("%+v %v", v4, err)
+	}
+	b.Reset()
+	RenderWhois(&b, v4, false, false, "", "dpt ")
+	if !strings.Contains(b.String(), "ALSO      RDAP has it too: 127.0.0.1   (dpt rdap 198.51.200.7)") {
+		t.Error(b.String())
 	}
 
 	// a server given: that one only, not IANA

@@ -98,13 +98,19 @@ run "ports: a list, TCP and UDP" "0|1" ports 1.1.1.1 53,443,853,53/udp,123/udp -
 run "connect: TLS on 443" "0|1" connect 1.1.1.1 443 -- CONNECT TLS
 run "trace 8.8.8.8" "0|1" trace 8.8.8.8 -- TARGET
 run "outside-ip" 0 outside-ip -- OUTSIDE
-run "whois: an address, from RDAP" 0 whois 1.1.1.1 -- "SOURCE    RDAP" HOLDER NETWORK
-run "whois: an AS number, from RDAP" 0 whois AS13335 -- "SOURCE    RDAP" Cloudflare
-run "whois: a domain, from RDAP" 0 whois www.iana.org -- "SOURCE    RDAP" "asked as iana.org" REGISTRAR
-run "whois: a domain with no RDAP server (.de), from whois" 0 whois denic.de -- "SOURCE    whois" "not in RDAP"
+run "whois: an address" 0 whois 1.1.1.1 -- "SOURCE    whois" HOLDER NETWORK "RDAP has it too" TEXT
+run "rdap: an address" 0 rdap 1.1.1.1 -- "SOURCE    RDAP" HOLDER NETWORK "whois has it too"
+run "rdap: an AS number" 0 rdap AS13335 -- "SOURCE    RDAP" Cloudflare
+run "rdap: a domain under a registered one" 0 rdap www.iana.org -- "SOURCE    RDAP" "asked as iana.org" REGISTRAR
+run "rdap: a domain with no RDAP server (.de)" 1 rdap denic.de -- "NO RDAP" "dpt whois denic.de"
+run "whois: a domain with no RDAP server (.de)" 0 whois denic.de -- "SOURCE    whois" "no RDAP"
 run "whois: a server given" 0 whois iana.org whois.iana.org -- "SOURCE    whois" "the server given"
+run "whois both: whois, then RDAP" 0 whois 8.8.8.8 both -- "SOURCE    whois" "SOURCE    RDAP"
 run "whois: a private address (no registry asked)" 0 whois 192.168.1.1 -- "RFC 1918"
 run "whois: not a thing to look up (bad usage)" 3 whois "not a name!"
+run "rdap: a whois server given (bad usage)" 3 rdap example.com whois.godaddy.com
+run "time: this clock against the references" "0|1" time -- TIME "this clock"
+run "time of a host" "0|1" time time.cloudflare.com -- TIME time.cloudflare.com
 run "time native: the system's own time tools, then dpt's measurement" "0|1" time native -- "TIME NATIVE" "\$ " "dpt now:"
 run "time native sync fix from a script (never changes anything unasked)" "0|3" time native sync fix -- "TIME NATIVE SYNC FIX"
 run "time native: a wrong word (bad usage)" 3 time native wrong
@@ -138,6 +144,9 @@ else
 	echo; echo "=== sudo dpt install"
 	sudo "$BIN" install < /dev/null; IX=$?
 	[ $IX = 0 ] || { echo "::error title=$OS/$ARCH: install::exit $IX"; FAIL=$((FAIL + 1)); }
+	if man -w dpt 2>/dev/null | grep -q dpt.1 || [ -f /usr/local/share/man/man1/dpt.1 ]; then
+		echo "--- the manual page is installed (man dpt): PASS"; PASS=$((PASS + 1))
+	else echo "--- the manual page is not installed: FAIL"; echo "::error title=$OS/$ARCH: install::no manual page"; FAIL=$((FAIL + 1)); fi
 	INST=/usr/local/bin/dpt
 fi
 GOT=$("$INST" $VERSION 2>/dev/null | awk '{print $2}')

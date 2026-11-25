@@ -30,7 +30,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "whois", "time", "shell", "help", "version"
+	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "whois", "rdap", "time", "shell", "help", "version"
 	Target string // dpt, smtp, ports: the address or name
 	// smtp <host> test <user> [<password>]: log in as User (Password ""
 	// is asked for)
@@ -42,12 +42,15 @@ type DPTCommand struct {
 	SweepNetwork string
 	// ports <host> [<list>]: nil is DPTDefaultPorts
 	PortList []DPTPortName
-	// whois <query> [<server>]
+	// whois <query> [<server>] [both], rdap <query> [<server>]
 	WhoisServer string
-	// time native [sync [fix]]: TimeSync, TimeFix; TimeFrom, TimeTo: the
-	// elevated copy on Windows runs those steps only (dpt-steps=a-b)
-	TimeSync, TimeFix bool
-	TimeFrom, TimeTo  int
+	WhoisBoth   bool
+	// time [<host>]: this clock (and host's NTP) against the references;
+	// time native [sync [fix]]: TimeNative, TimeSync, TimeFix; TimeFrom,
+	// TimeTo: the elevated copy on Windows runs those steps only
+	// (dpt-steps=a-b)
+	TimeNative, TimeSync, TimeFix bool
+	TimeFrom, TimeTo              int
 	// connect <host> <port> [tls|notls]
 	ConnectPort       int
 	ConnectTLS, NoTLS bool
@@ -132,10 +135,14 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            unless notls), what the server says first; then, at a terminal, type to it\n")
 	fmt.Fprintf(&b, "       %s trace <host>     the routers on the way, each hop asked 3 times, with times and loss\n", prog)
 	fmt.Fprintf(&b, "       %s outside-ip       the address the internet sees (asks %s)\n", prog, OutsideIPURL)
-	fmt.Fprintf(&b, "       %s whois <address | network | AS number | domain> [<server>]\n", prog)
-	fmt.Fprintf(&b, "                            who holds it: RDAP (the registry's JSON) where it is, else whois;\n")
-	fmt.Fprintf(&b, "                            says which answered (1.1.1.1, 2001:db8::/32, AS13335, example.com);\n")
-	fmt.Fprintf(&b, "                            server: ask that one only (whois.godaddy.com, or https://... for RDAP)\n")
+	fmt.Fprintf(&b, "       %s whois <address | network | AS number | domain> [<server>] [both]\n", prog)
+	fmt.Fprintf(&b, "                            who holds it, by whois (port 43): IANA, the registry it refers to; the summary\n")
+	fmt.Fprintf(&b, "                            and the registry's text; says whether RDAP has it too. server: ask that whois\n")
+	fmt.Fprintf(&b, "                            server only (whois.godaddy.com); both: and RDAP, one answer after the other\n")
+	fmt.Fprintf(&b, "       %s rdap <address | network | AS number | domain> [<server>]\n", prog)
+	fmt.Fprintf(&b, "                            who holds it, by RDAP (the registry's JSON, read the same way from each);\n")
+	fmt.Fprintf(&b, "                            says whether whois has it too. server: that RDAP server only (https://...)\n")
+	fmt.Fprintf(&b, "       %s time [<host>]    this clock against %s (and host's NTP time)\n", prog, strings.Join(DPTDefaultNTP, ", "))
 	fmt.Fprintf(&b, "       %s time native [sync [fix]]\n", prog)
 	fmt.Fprintf(&b, "                            the system's own time tools (w32tm, sntp, chronyc...), each command shown,\n")
 	fmt.Fprintf(&b, "                            run on Enter; sync: resync now (as admin); fix: set it to keep in sync\n")
@@ -317,7 +324,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
 		}
-	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "time":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "rdap", "time":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New(c.Mode + " takes no test letters")
 		}
@@ -334,12 +341,13 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 }
 
 // dptModes are the words that choose a mode instead of naming a target.
-var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "time"}
+var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "rdap", "time"}
 
-const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, time native, install, upgrade"
+const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, rdap, time native, install, upgrade"
 
 // TimeUse is how time is written.
-const TimeUse = "time native [sync [fix]]"
+const TimeUse = "time [<host>] | time native [sync [fix]]: this clock (and host's NTP) against the references;\n" +
+	"  native: the system's own time tools; sync: resync now; sync fix: set the system to keep in sync"
 
 // words reads the words that are not options: a mode and its arguments,
 // or the target.
@@ -428,28 +436,47 @@ func (c *DPTCommand) words(pos []string) error {
 			}
 			words = append(words, strings.ToLower(w))
 		}
-		switch strings.Join(words, " ") {
-		case "native":
-		case "native sync":
-			c.TimeSync = true
-		case "native sync fix":
-			c.TimeSync, c.TimeFix = true, true
+		switch j := strings.Join(words, " "); {
+		case j == "":
+			// this clock against the reference servers
+		case len(words) == 1 && j != "native" && j != "sync" && j != "fix":
+			c.Target = rest[0] // that host's NTP, beside the references
+		case j == "native":
+			c.TimeNative = true
+		case j == "native sync":
+			c.TimeNative, c.TimeSync = true, true
+		case j == "native sync fix":
+			c.TimeNative, c.TimeSync, c.TimeFix = true, true, true
 		default:
-			return errors.New(TimeUse + ": the system's own time tools (time native), a resync (sync), set to keep in sync (sync fix)")
+			return errors.New(TimeUse)
 		}
-	case "whois":
-		if len(rest) < 1 || len(rest) > 2 {
-			return errors.New(WhoisUse)
+	case "whois", "rdap":
+		use := WhoisUse
+		if c.Mode == "rdap" {
+			use = RDAPUse
+		}
+		if len(rest) < 1 {
+			return errors.New(use)
 		}
 		if _, err := ParseWhoisQuery(rest[0]); err != nil {
 			return err
 		}
 		c.Target = rest[0]
-		if len(rest) == 2 {
-			if err := CheckWhoisServer(rest[1]); err != nil {
-				return err
+		for _, w := range rest[1:] {
+			switch {
+			case c.Mode == "whois" && strings.EqualFold(w, "both") && !c.WhoisBoth:
+				c.WhoisBoth = true
+			case c.WhoisServer == "":
+				if err := CheckLookupServer(c.Mode == "rdap", w); err != nil {
+					return err
+				}
+				c.WhoisServer = w
+			default:
+				return errors.New(use)
 			}
-			c.WhoisServer = rest[1]
+		}
+		if c.WhoisBoth && c.WhoisServer != "" {
+			return errors.New("whois: a server or both, not both at once (the server is one protocol's)")
 		}
 	case "ports":
 		if len(rest) < 1 || len(rest) > 2 {

@@ -1,0 +1,318 @@
+.\" SPDX-License-Identifier: MIT
+.\" dpt(1) - Diagnostic Ports Time
+.TH DPT 1 "2026-11-25" "dpt" "User Commands"
+.SH NAME
+dpt \- Diagnostic Ports Time: is this address working as a network peer, and what is on the way to it
+.SH SYNOPSIS
+.B dpt
+.RI [ address | name ]
+.RB [ \-tdp ]
+.RI [ options ]
+.br
+.B dpt dhcp
+.RB [ \-td ]
+.RI [ options ]
+.br
+.B dpt info
+.br
+.B dpt smtp
+.IR host " [" "test user " [ password "]] [" "from address" "] [" "to address" ]
+.br
+.B dpt smtp prompt
+.br
+.B dpt sweep
+.RB [ ports ]
+.RI [ network ]
+.br
+.B dpt ports
+.IR host " [" ports ]
+.br
+.B dpt connect
+.IR "host port" " [" tls | notls ]
+.br
+.B dpt trace
+.I host
+.br
+.B dpt whois
+.IR what " [" server ]
+.RB [ both ]
+.br
+.B dpt rdap
+.IR what " [" server ]
+.br
+.B dpt time
+.RI [ host ]
+.br
+.B dpt time native
+.RB [ sync " [" fix ]]
+.br
+.B dpt outside\-ip
+.br
+.B dpt install
+|
+.B dpt upgrade
+.br
+.B dpt
+.SH DESCRIPTION
+.B dpt
+tests an address the way a network engineer would: ping, DNS with the address
+as the resolver, and NTP time with this machine's clock checked against
+reference servers; then what the address offers.
+It also finds every DHCP server on the segment, checks mail servers, sweeps a
+network, tries ports, connects as telnet would, traces the route, says who holds
+an address or a domain (whois and RDAP), and runs the system's own time tools.
+With no arguments it is an interactive shell that works as
+.BR nslookup (1)
+does, with the commands below added.
+.PP
+It is one program for Linux, macOS and Windows, on Intel and ARM.
+Options are written the way the system writes them:
+.B \-c 3 \-w 2
+on Linux and macOS
+.RB ( "\-\-count 3" ,
+.BR \-\-timeout=2s ),
+.B /c:3 /w:2
+on Windows.
+.SH TESTS
+The tests are letters written together (none: all three):
+.TP
+.B t
+time: an NTP query of the address, compared with time.google.com and
+time.windows.com, and this machine's clock checked against them
+(OK within 50 ms, WARN within 1 s, FAIL beyond, or unsynchronised).
+.TP
+.B d
+DNS: lookups with the address as the resolver: recursion, EDNS0, DNSSEC
+validation, DNS over TCP.
+.TP
+.B p
+ping: ICMP echo.
+.PP
+When all three run, FEATURES lists what the address offers of what dpt tries:
+icmp, dns/udp, dns/tcp, recursion, edns0, dnssec, dot(853), ntp, whois(43),
+rdap (HTTPS, asked under the name when one is given), ldap(389) and ldaps(636).
+.SH COMMANDS
+.TP
+.BI dhcp
+Sends one DHCPDISCOVER and shows every offer, rogue servers too, without taking
+a lease;
+.B t
+and
+.B d
+then test the NTP and DNS servers the offers name.
+It needs root (Linux: or CAP_NET_RAW) or an Administrator prompt; typed at a
+terminal, dpt asks for it itself (sudo, or UAC on Windows).
+.TP
+.B info
+This machine: each interface's address, gateway and DHCP lease; the DNS and NTP
+servers it uses; its clock against Google, Microsoft, AWS, Apple and NIST; the
+addresses the internet sees (asks https://ifconfig.me/ip, over IPv4 and IPv6).
+.TP
+.BI smtp " host"
+Ports 25, 465, 587, 2525 and 8025: the greeting, STARTTLS or TLS, the
+certificate, AUTH, why a port fails, a firewall in the way; then what mail can
+and cannot do from here.
+.BI test " user"
+logs in (the password is asked for when not given);
+.BI to " address"
+then sends a test message.
+.B smtp prompt
+asks a line at a time, offering the last answers.
+.TP
+.BR sweep " [" ports "] [\fInetwork\fR]"
+Pings every address of this network, or of
+.I network
+(10.0.0.0/24; an address: its /24; at most /22), 25 at a time;
+.B ports
+then tries the common ports of each that answers.
+.TP
+.BI ports " host" " \fR[\fIports\fR]"
+The 66 common TCP ports (whois 43, LDAP 389 and 636, mail on 2525 and 8025,
+HTTPS on 1443 ... 14443 among them) and 11 UDP services: DNS, TFTP, QUIC, NTP,
+NetBIOS, SNMP, RADIUS (1812, accounting 1813), SSDP and mDNS.
+Each UDP port is sent a real, harmless request of its own; silence is
+"no answer": open and quiet, or dropped by a firewall.
+A RADIUS server that checks its shared secret (dpt guesses none) stays silent:
+only a closed RADIUS port is told apart.
+.I ports
+is a list: 587,2525,8000\-8010,53/udp.
+.TP
+.BI connect " host port" " \fR[\fBtls\fR|\fBnotls\fR]"
+Connects as telnet would: how long it took, the TLS and certificate, what the
+server says first (SSH, SMTP, FTP, a switch's login prompt...); then, at a
+terminal, what is typed goes to the server a line at a time.
+.TP
+.BI trace " host"
+The routers on the way, each hop asked 3 times at once, with times and loss.
+.TP
+.BI whois " what" " \fR[\fIserver\fR] [\fBboth\fR]"
+Who holds an address, a network, an AS number or a domain
+(1.1.1.1, 2001:db8::/32, AS13335, example.com), by whois on port 43:
+IANA, the registry it refers to, then one referral from there.
+It shows a summary (holder, network or AS, abuse contact, dates; for a domain
+its registrar, status, name servers, DNSSEC) read from the text, then the
+registry's text itself, and says whether RDAP has it too.
+.I server
+asks that whois server only, as
+.B whois \-h
+does.
+.B both
+asks RDAP too, and shows the two answers one after the other.
+.TP
+.BI rdap " what" " \fR[\fIserver\fR]"
+The same by RDAP: IANA's lists name the registry's RDAP server, and its JSON
+answer is read the same way from every registry.
+A domain's registrar is asked after its registry (it holds the registrant).
+It says whether whois has it too, and when there is no RDAP server for it
+(some country domains: .de, .io, .jp).
+.I server
+is an RDAP server, https://....
+.B \-\-verbose
+adds every contact and remark;
+.B \-\-json
+gives the summary and the registry's answer itself.
+.IP
+For both: a private or documentation address is named as such, and no registry
+is asked.
+.TP
+.BI time " \fR[\fIhost\fR]"
+This machine's clock against the reference servers (time.google.com,
+time.windows.com; \fB\-\-ntp\fR), and, given a host, its NTP time beside them.
+.TP
+.B time native \fR[\fBsync\fR [\fBfix\fR]]
+Runs the system's own time tools, each command shown and run when Enter is
+pressed (Ctrl\-C stops):
+.B w32tm /query /status
+and
+.B w32tm /stripchart
+on Windows,
+.B sntp
+on macOS,
+.BR chronyc ,
+.B timedatectl
+or
+.B ntpq
+on Linux; then dpt measures the clock itself against time.cloudflare.com,
+time.google.com and time.windows.com.
+.IP
+.B sync
+resyncs now (as Administrator or root), measured before and after.
+.IP
+.B sync fix
+sets the system to keep its clock in sync: on Windows, Windows Time starts with
+Windows and syncs with the three servers every hour; on macOS, network time on;
+on Linux, the installed time service on.
+It says first that you should be the system admin, and how to put things back,
+and waits for Enter; from a script it never runs.
+On a Windows PC joined to a domain it refuses and changes nothing: such a PC
+must take its time from a domain controller.
+.TP
+.B outside\-ip
+The address the internet sees.
+.TP
+.B install
+Puts this dpt where the system finds it (/usr/local/bin; Windows:
+C:\eProgram Files\edpt, added to PATH), and this page in
+/usr/local/share/man/man1.
+.TP
+.B upgrade
+Downloads the newest release, checks it against the release's SHA256SUMS, and
+installs it; never an older one.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-count " \fIn\fR"
+Pings and DNS lookups per run (5).
+.TP
+.BR \-w ", " \-\-timeout " \fIs\fR"
+How long to wait for each answer, seconds or a duration such as 500ms (2).
+.TP
+.BI \-\-names " a,b,c"
+Names to resolve.
+.TP
+.BI \-\-ntp " a,b"
+Reference NTP servers.
+.TP
+.B \-\-all
+Test every address a name resolves to.
+.TP
+.BI \-\-iface " name"
+dhcp, info, sweep: the interface (else the Ethernet one with the LAN gateway).
+.TP
+.BI \-\-listen " s"
+dhcp: how long to collect offers (5).
+.TP
+.B \-\-select
+dhcp, info, sweep: list the interfaces and choose one.
+.TP
+.B \-\-random\-mac
+dhcp: probe with a random MAC.
+.TP
+.BR \-4 ", " \-6
+IPv4 only, IPv6 only.
+.TP
+.B \-\-json
+One JSON document.
+.TP
+.B \-\-verbose
+More: a line per echo and per lookup; every RDAP contact and remark.
+.TP
+.B \-\-no\-color
+No colour (as does NO_COLOR in the environment).
+.TP
+.BR \-h ", " \-\-help
+The help.
+.TP
+.B \-\-version
+The version.
+.SH EXIT STATUS
+.TP
+.B 0
+All OK.
+.TP
+.B 1
+A test failed (or nothing was found).
+.TP
+.B 2
+Minimum execution level not met: a privilege or the network dpt needs.
+.TP
+.B 3
+Bad usage.
+.SH FILES
+.TP
+.I ~/.dpt
+The smtp prompt's last answers, the password among them: keep it private
+(Windows: %APPDATA%\edpt\e.dpt).
+.TP
+.I ~/.dpt_history
+The shell's history (Windows: %APPDATA%\edpt\ehistory).
+.SH EXAMPLES
+.TP
+.B dpt 1.1.1.1
+Ping, DNS and time of 1.1.1.1, and its features.
+.TP
+.B sudo dpt dhcp
+Every DHCP server on the segment.
+.TP
+.B dpt ports mail.example.com 587,2525,8025
+Three ports.
+.TP
+.B dpt whois 8.8.8.8 both
+Who holds 8.8.8.8, by whois and by RDAP.
+.TP
+.B dpt rdap example.com
+A domain's registry and registrar, by RDAP.
+.TP
+.B dpt time native sync
+Resync this clock, and see it before and after.
+.SH SEE ALSO
+.BR whois (1),
+.BR nslookup (1),
+.BR ping (8),
+.BR traceroute (8),
+.BR chronyc (1),
+.BR sntp (1)
+.PP
+https://github.com/openipv8-org/dpt
+.SH AUTHORS
+Jamie Thain and Claude Opus 5.5 (Anthropic).
+MIT licence.

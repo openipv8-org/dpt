@@ -202,19 +202,27 @@ func (s *Shell) outsideIP() {
 	s.printf("\n")
 }
 
-// whois is whois [what] [server] [-v]: what defaults to the server.
-func (s *Shell) whois(args []string) {
-	verbose := false
+// whois is whois [what] [server] [both] [-v], and rdap [what] [server]
+// [-v]: what defaults to the server.
+func (s *Shell) whois(cmd string, args []string) {
+	verbose, both := false, false
 	var words []string
 	for _, a := range args {
-		if a == "-v" || a == "--verbose" || a == "/verbose" {
+		switch {
+		case a == "-v" || a == "--verbose" || a == "/verbose":
 			verbose = true
-			continue
+		case cmd == "whois" && strings.EqualFold(a, "both"):
+			both = true
+		default:
+			words = append(words, a)
 		}
-		words = append(words, a)
 	}
-	if len(words) > 2 {
-		s.printf("usage: whois [address | network | AS number | domain] [server] [-v]\n")
+	if len(words) > 2 || both && len(words) > 1 {
+		if cmd == "rdap" {
+			s.printf("usage: rdap [address | network | AS number | domain] [server] [-v]\n")
+		} else {
+			s.printf("usage: whois [address | network | AS number | domain] [server | both] [-v]\n")
+		}
 		return
 	}
 	what, server := "", ""
@@ -223,7 +231,7 @@ func (s *Shell) whois(args []string) {
 	}
 	if len(words) == 2 {
 		server = words[1]
-		if err := dpt.CheckWhoisServer(server); err != nil {
+		if err := dpt.CheckLookupServer(cmd == "rdap", server); err != nil {
 			s.printf("*** %v\n", err)
 			return
 		}
@@ -235,16 +243,27 @@ func (s *Shell) whois(args []string) {
 		}
 		what = name
 	}
+	run := []func(context.Context, string, dpt.WhoisOptions) (*dpt.WhoisReport, error){dpt.RunWhois}
+	if cmd == "rdap" {
+		run[0] = dpt.RunRDAP
+	} else if both {
+		run = append(run, dpt.RunRDAP)
+	}
 	ctx, cancel := s.ctx()
 	defer cancel()
-	l := s.live()
-	r, err := dpt.RunWhois(ctx, what, dpt.WhoisOptions{Family: s.DPT.Family, Agent: s.Agent, Server: server, Live: l})
-	l.Stop()
-	if err != nil {
-		s.printf("*** %v\n", err)
-		return
+	for i, f := range run {
+		l := s.live()
+		r, err := f(ctx, what, dpt.WhoisOptions{Family: s.DPT.Family, Agent: s.Agent, Server: server, Live: l})
+		l.Stop()
+		if i > 0 {
+			s.printf("\n")
+		}
+		if err != nil {
+			s.printf("*** %v\n", err)
+			continue
+		}
+		dpt.RenderWhois(s.out, r, s.Color, verbose, cmd+" "+what+" -v", "")
 	}
-	dpt.RenderWhois(s.out, r, s.Color, verbose, "whois "+what+" -v")
 	s.printf("\n")
 }
 
