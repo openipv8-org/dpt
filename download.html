@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download dpt</title>
+<meta name="description" content="dpt - Diagnostic Ports Time: downloads for Windows, macOS and Linux, the code signing policy, and what dpt sends over the network.">
+<style>
+:root {
+  --bg: #fbfbfa; --fg: #1d1d1b; --muted: #5f5f5a; --line: #e2e1dc;
+  --card: #ffffff; --accent: #0b6e4f; --code: #f1f0ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --fg: #ecebe6; --muted: #a3a29b; --line: #2f2e2b;
+    --card: #1c1c1a; --accent: #4cc39a; --code: #26251f;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --fg: #ecebe6; --muted: #a3a29b; --line: #2f2e2b;
+  --card: #1c1c1a; --accent: #4cc39a; --code: #26251f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 820px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { font-size: 1.9rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 1.2rem; margin: 40px 0 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+p { margin: 0 0 12px; }
+.lead { color: var(--muted); margin-bottom: 28px; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, "SF Mono", Consolas, Menlo, monospace; font-size: 0.9em; }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
+pre code { background: none; padding: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.dl {
+  display: block; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; text-decoration: none; color: var(--fg);
+}
+.dl:hover, .dl:focus-visible { border-color: var(--accent); }
+.dl strong { display: block; }
+.dl span { color: var(--muted); font-size: 0.9rem; }
+.dl code { display: inline-block; margin-top: 6px; color: var(--accent); background: none; padding: 0; }
+.note { color: var(--muted); font-size: 0.92rem; }
+table { border-collapse: collapse; width: 100%; margin: 0 0 12px; font-size: 0.95rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+footer { margin-top: 48px; color: var(--muted); font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>Download dpt</h1>
+<p class="lead">dpt (Diagnostic Ports Time) is a network engineer's tool: ping, DNS and NTP time of an address,
+every DHCP server on the segment, mail servers, ports, routes, whois and RDAP, in one program for
+Windows, macOS and Linux. Open source, MIT licence.
+<a href="https://github.com/openipv8-org/dpt">Source on GitHub</a>.</p>
+
+<p>Each link gets the latest release.
+<a href="https://github.com/openipv8-org/dpt/releases">All releases</a> ·
+<a href="https://github.com/openipv8-org/dpt/releases/latest/download/SHA256SUMS">SHA256SUMS</a></p>
+
+<div class="grid">
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-amd64.exe">
+    <strong>Windows</strong><span>most PCs (Intel / AMD)</span><code>dpt-windows-amd64.exe</code></a>
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-windows-arm64.exe">
+    <strong>Windows on ARM</strong><span>Snapdragon, Surface Pro X</span><code>dpt-windows-arm64.exe</code></a>
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-arm64">
+    <strong>Mac, Apple Silicon</strong><span>M1 and later</span><code>dpt-darwin-arm64</code></a>
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-darwin-amd64">
+    <strong>Mac, Intel</strong><span>older Macs</span><code>dpt-darwin-amd64</code></a>
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-amd64">
+    <strong>Linux</strong><span>Intel / AMD</span><code>dpt-linux-amd64</code></a>
+  <a class="dl" href="https://github.com/openipv8-org/dpt/releases/latest/download/dpt-linux-arm64">
+    <strong>Linux, ARM</strong><span>Raspberry Pi 64-bit, ARM servers</span><code>dpt-linux-arm64</code></a>
+</div>
+
+<h2>Install</h2>
+<p><strong>Linux and macOS</strong>: this checks the download against SHA256SUMS and puts dpt in
+<code>/usr/local/bin</code>, with its manual page (<code>man dpt</code>):</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/openipv8-org/dpt/main/scripts/install.sh | bash</code></pre>
+<p><strong>Or</strong> download the file for your system and run it with nothing after it: it installs itself,
+asking for sudo, or on Windows an Administrator prompt. Then <code>dpt</code> works in a new window,
+and <code>dpt upgrade</code> gets each new release.</p>
+<p class="note">The Windows builds are not code signed yet (see below), so Windows may warn about them,
+and Smart App Control blocks them.</p>
+
+<p>Every release is built from this repository's source by
+<a href="https://github.com/openipv8-org/dpt/actions/workflows/test.yml">GitHub Actions</a>,
+and tested on a real machine of each of the six kinds above before it is published. A release is
+published only when all six pass.</p>
+
+<h2 id="code-signing-policy">Code signing policy</h2>
+<p>The Windows releases are to be signed through SignPath Foundation's free code signing for open
+source projects (applied for; the Windows builds are not signed yet). Once they are:</p>
+<p><strong>Free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>,
+certificate by <a href="https://signpath.org/">SignPath Foundation</a>.</strong></p>
+<table>
+  <tr><th>Role</th><th>Who</th></tr>
+  <tr><td>Committers and reviewers</td><td>Jamie Thain (<a href="https://github.com/openipv8-org/dpt/graphs/contributors">contributors</a>)</td></tr>
+  <tr><td>Approvers (each release)</td><td>Jamie Thain</td></tr>
+</table>
+<p>Only the files GitHub Actions builds from a release tag of this repository are signed: never a
+build made on someone's own machine. Every change goes through the repository's history, and every
+account that can change it uses two-factor authentication.</p>
+
+<h2 id="privacy">Privacy</h2>
+<p>dpt collects nothing and sends no telemetry. It talks to the network only when you run a command,
+and only to what that command is for:</p>
+<table>
+  <tr><th>Command</th><th>Asks</th></tr>
+  <tr><td>an address or name, <code>ports</code>, <code>connect</code>, <code>trace</code>, <code>sweep</code>, <code>smtp</code></td><td>the address, host or network you give, and DNS servers to look up names</td></tr>
+  <tr><td>time tests, <code>time</code>, <code>time native</code>, <code>info</code></td><td>the NTP servers time.google.com, time.windows.com, time.cloudflare.com (and those you name)</td></tr>
+  <tr><td><code>info</code>, <code>outside-ip</code></td><td>ifconfig.me, for the address the internet sees</td></tr>
+  <tr><td><code>whois</code>, <code>rdap</code></td><td>IANA and the registry that holds what you ask about</td></tr>
+  <tr><td><code>upgrade</code>, <code>install &lt;version&gt;</code></td><td>GitHub, for the release and its SHA256SUMS</td></tr>
+</table>
+<p>On your own machine it keeps the interactive shell's history (<code>~/.dpt_history</code>) and the
+answers to <code>smtp prompt</code> (<code>~/.dpt</code>, which can hold a mail password: keep it private).
+Nothing of either leaves the machine.</p>
+
+<footer>dpt · MIT licence · Jamie Thain and Claude Opus 5.5 (Anthropic) ·
+<a href="https://github.com/openipv8-org/dpt">github.com/openipv8-org/dpt</a></footer>
+</main>
+</body>
+</html>
