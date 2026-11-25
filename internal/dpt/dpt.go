@@ -6,8 +6,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,6 +206,10 @@ type DPTFeatures struct {
 	DoT       bool `json:"dns_over_tls"`
 	NTP       bool `json:"ntp"`
 	Stratum   int  `json:"ntp_stratum,omitempty"`
+	Whois     bool `json:"whois"` // a whois server on TCP 43
+	RDAP      bool `json:"rdap"`  // an RDAP server on HTTPS 443
+	LDAP      bool `json:"ldap"`  // LDAP on TCP 389
+	LDAPS     bool `json:"ldaps"` // LDAP over TLS on TCP 636
 }
 
 // DPTAddrReport is every section for one address.
@@ -281,13 +287,17 @@ func RunDPT(ctx context.Context, target string, o DPTOptions) (*DPTReport, error
 		o.OnTarget(rep.Target)
 	}
 	rep.Results = make([]DPTAddrReport, len(ips))
+	name := "" // a name, not an address: RDAP may be served under it only
+	if net.ParseIP(strings.Trim(target, "[]")) == nil {
+		name = strings.TrimSuffix(target, ".")
+	}
 	for i, ip := range ips {
-		runDPTAddr(ctx, ip, o, &rep.Results[i])
+		runDPTAddr(ctx, ip, name, o, &rep.Results[i])
 	}
 	return rep, nil
 }
 
-func runDPTAddr(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport) {
+func runDPTAddr(ctx context.Context, ip net.IP, name string, o DPTOptions, a *DPTAddrReport) {
 	*a = DPTAddrReport{Address: ip.String()}
 	emit := func(sec string) {
 		if o.OnSection != nil {
@@ -325,7 +335,7 @@ func runDPTAddr(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport) 
 	}
 	if t.Ping && t.DNS && t.Time {
 		o.Live.Set("features", "features of "+ip.String())
-		f := dptFeatures(ctx, ip, o, a)
+		f := dptFeatures(ctx, ip, name, o, a)
 		o.Live.Drop("features")
 		a.Features = &f
 		emit("FEATURES")
@@ -612,7 +622,7 @@ func dptLocalWords(v Ms) string {
 	return fms(v) + " ms ahead"
 }
 
-func dptFeatures(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport) DPTFeatures {
+func dptFeatures(ctx context.Context, ip net.IP, name string, o DPTOptions, a *DPTAddrReport) DPTFeatures {
 	f := DPTFeatures{ICMP: a.Ping.Received > 0}
 	d := a.DNS
 	if !d.NoService {
@@ -641,7 +651,99 @@ func dptFeatures(ctx context.Context, ip net.IP, o DPTOptions, a *DPTAddrReport)
 			f.NTP, f.Stratum = true, r.Stratum
 		}
 	}
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() { defer wg.Done(); f.Whois = dptWhoisServer(ctx, ip, o.Timeout) }()
+	go func() { defer wg.Done(); f.RDAP = dptRDAPServer(ctx, ip, name, o.Timeout) }()
+	go func() { defer wg.Done(); f.LDAP = dptLDAPServer(ctx, ip, false, o.Timeout) }()
+	go func() { defer wg.Done(); f.LDAPS = dptLDAPServer(ctx, ip, true, o.Timeout) }()
+	wg.Wait()
 	return f
+}
+
+// dptWhoisServer says whether ip answers whois on TCP 43: asked for
+// "help", it sends text back.
+func dptWhoisServer(ctx context.Context, ip net.IP, timeout time.Duration) bool {
+	t, err := whoisTCP(ctx, net.JoinHostPort(ip.String(), "43"), "help", WhoisOptions{Timeout: timeout})
+	return err == nil && strings.TrimSpace(t) != ""
+}
+
+// ldapAnonBind is an LDAP anonymous simple bind (RFC 4511): message 1,
+// version 3, no name, no password.  It reads nothing from the directory.
+var ldapAnonBind = []byte{0x30, 0x0c, 0x02, 0x01, 0x01, 0x60, 0x07, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00}
+
+// dptLDAPServer says whether ip answers LDAP on TCP 389 (tls: LDAPS on
+// 636): an anonymous bind gets a BindResponse back, whether the server
+// allows anonymous binds or not.  The certificate is not checked.
+func dptLDAPServer(ctx context.Context, ip net.IP, tlsOn bool, timeout time.Duration) bool {
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var conn net.Conn
+	var err error
+	if tlsOn {
+		d := tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}
+		conn, err = d.DialContext(c, "tcp", net.JoinHostPort(ip.String(), "636"))
+	} else {
+		conn, err = (&net.Dialer{Timeout: timeout}).DialContext(c, "tcp", net.JoinHostPort(ip.String(), "389"))
+	}
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write(ldapAnonBind); err != nil {
+		return false
+	}
+	b := make([]byte, 64)
+	n, _ := io.ReadAtLeast(conn, b, 8)
+	return isLDAPBindResponse(b[:n])
+}
+
+// isLDAPBindResponse: a SEQUENCE holding message ID 1 and a BindResponse
+// ([APPLICATION 1], 0x61).
+func isLDAPBindResponse(b []byte) bool {
+	if len(b) < 8 || b[0] != 0x30 {
+		return false
+	}
+	i := 2
+	if b[1]&0x80 != 0 { // a long length
+		i += int(b[1] & 0x7f)
+	}
+	return i+3 < len(b) && b[i] == 0x02 && b[i+1] == 0x01 && b[i+2] == 0x01 && b[i+3] == 0x61
+}
+
+// dptRDAPServer says whether ip answers RDAP on HTTPS 443: its help (at
+// /help, or under /rdap/ or /registry/, where registries put it) is
+// RDAP's JSON.  Asked under name where there is one (a server may serve
+// RDAP under its name only), always at ip.  The certificate is not
+// checked: the test is whether RDAP answers, not whose it is.
+func dptRDAPServer(ctx context.Context, ip net.IP, name string, timeout time.Duration) bool {
+	addr := net.JoinHostPort(ip.String(), "443")
+	d := &net.Dialer{Timeout: timeout}
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, ServerName: name},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, network, addr)
+		},
+		TLSHandshakeTimeout: timeout}
+	defer tr.CloseIdleConnections()
+	cl := &http.Client{Transport: tr, Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	host := name
+	if host == "" {
+		host = addr
+	}
+	base := "https://" + host
+	for _, p := range []string{"/help", "/rdap/help", "/registry/help"} {
+		resp, b, err := whoisGet(ctx, cl, base+p, "")
+		if err != nil {
+			return false // no HTTPS at all: no need to try the other paths
+		}
+		if resp.StatusCode == 200 && (strings.Contains(resp.Header.Get("Content-Type"), "rdap") ||
+			strings.Contains(string(b), `"rdapConformance"`)) {
+			return true
+		}
+	}
+	return false
 }
 
 // dptDoT is a TLS handshake on TCP 853.  The certificate is not checked:

@@ -202,6 +202,52 @@ func (s *Shell) outsideIP() {
 	s.printf("\n")
 }
 
+// whois is whois [what] [server] [-v]: what defaults to the server.
+func (s *Shell) whois(args []string) {
+	verbose := false
+	var words []string
+	for _, a := range args {
+		if a == "-v" || a == "--verbose" || a == "/verbose" {
+			verbose = true
+			continue
+		}
+		words = append(words, a)
+	}
+	if len(words) > 2 {
+		s.printf("usage: whois [address | network | AS number | domain] [server] [-v]\n")
+		return
+	}
+	what, server := "", ""
+	if len(words) > 0 {
+		what = words[0]
+	}
+	if len(words) == 2 {
+		server = words[1]
+		if err := dpt.CheckWhoisServer(server); err != nil {
+			s.printf("*** %v\n", err)
+			return
+		}
+	}
+	if what == "" {
+		name, _, ok := s.host(nil, 0)
+		if !ok {
+			return
+		}
+		what = name
+	}
+	ctx, cancel := s.ctx()
+	defer cancel()
+	l := s.live()
+	r, err := dpt.RunWhois(ctx, what, dpt.WhoisOptions{Family: s.DPT.Family, Agent: s.Agent, Server: server, Live: l})
+	l.Stop()
+	if err != nil {
+		s.printf("*** %v\n", err)
+		return
+	}
+	dpt.RenderWhois(s.out, r, s.Color, verbose, "whois "+what+" -v")
+	s.printf("\n")
+}
+
 // withoutPassword is a line with an smtp test password taken out, for
 // the history and the echo: smtp host test user secret -> smtp host test
 // user.

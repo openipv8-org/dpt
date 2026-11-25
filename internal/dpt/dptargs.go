@@ -30,7 +30,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "shell", "help", "version"
+	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "whois", "shell", "help", "version"
 	Target string // dpt, smtp, ports: the address or name
 	// smtp <host> test <user> [<password>]: log in as User (Password ""
 	// is asked for)
@@ -42,6 +42,8 @@ type DPTCommand struct {
 	SweepNetwork string
 	// ports <host> [<list>]: nil is DPTDefaultPorts
 	PortList []DPTPortName
+	// whois <query> [<server>]
+	WhoisServer string
 	// connect <host> <port> [tls|notls]
 	ConnectPort       int
 	ConnectTLS, NoTLS bool
@@ -126,6 +128,10 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            unless notls), what the server says first; then, at a terminal, type to it\n")
 	fmt.Fprintf(&b, "       %s trace <host>     the routers on the way, each hop asked 3 times, with times and loss\n", prog)
 	fmt.Fprintf(&b, "       %s outside-ip       the address the internet sees (asks %s)\n", prog, OutsideIPURL)
+	fmt.Fprintf(&b, "       %s whois <address | network | AS number | domain> [<server>]\n", prog)
+	fmt.Fprintf(&b, "                            who holds it: RDAP (the registry's JSON) where it is, else whois;\n")
+	fmt.Fprintf(&b, "                            says which answered (1.1.1.1, 2001:db8::/32, AS13335, example.com);\n")
+	fmt.Fprintf(&b, "                            server: ask that one only (whois.godaddy.com, or https://... for RDAP)\n")
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
@@ -303,7 +309,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
 		}
-	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New(c.Mode + " takes no test letters")
 		}
@@ -320,9 +326,9 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 }
 
 // dptModes are the words that choose a mode instead of naming a target.
-var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace"}
+var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois"}
 
-const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, install, upgrade"
+const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, install, upgrade"
 
 // words reads the words that are not options: a mode and its arguments,
 // or the target.
@@ -397,6 +403,20 @@ func (c *DPTCommand) words(pos []string) error {
 			return errors.New("trace <host>")
 		}
 		c.Target = rest[0]
+	case "whois":
+		if len(rest) < 1 || len(rest) > 2 {
+			return errors.New(WhoisUse)
+		}
+		if _, err := ParseWhoisQuery(rest[0]); err != nil {
+			return err
+		}
+		c.Target = rest[0]
+		if len(rest) == 2 {
+			if err := CheckWhoisServer(rest[1]); err != nil {
+				return err
+			}
+			c.WhoisServer = rest[1]
+		}
 	case "ports":
 		if len(rest) < 1 || len(rest) > 2 {
 			return errors.New("ports <host> [<ports>]: 587,2525,8000-8010,53/udp")

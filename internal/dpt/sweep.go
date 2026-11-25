@@ -30,7 +30,7 @@ type DPTPortName struct {
 
 // DPTTopPorts are the common TCP ports tried.
 var DPTTopPorts = []DPTPortName{
-	{21, "ftp", "tcp"}, {22, "ssh", "tcp"}, {23, "telnet", "tcp"}, {25, "smtp", "tcp"}, {53, "dns", "tcp"},
+	{21, "ftp", "tcp"}, {22, "ssh", "tcp"}, {23, "telnet", "tcp"}, {25, "smtp", "tcp"}, {43, "whois", "tcp"}, {53, "dns", "tcp"},
 	{80, "http", "tcp"}, {81, "http-alt", "tcp"}, {88, "kerberos", "tcp"}, {110, "pop3", "tcp"}, {111, "rpcbind", "tcp"},
 	{135, "msrpc", "tcp"}, {139, "netbios", "tcp"}, {143, "imap", "tcp"}, {389, "ldap", "tcp"}, {443, "https", "tcp"},
 	{445, "smb", "tcp"}, {465, "smtps", "tcp"}, {514, "rsh", "tcp"}, {515, "lpd", "tcp"}, {548, "afp", "tcp"},

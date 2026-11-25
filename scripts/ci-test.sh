@@ -98,6 +98,13 @@ run "ports: a list, TCP and UDP" "0|1" ports 1.1.1.1 53,443,853,53/udp,123/udp -
 run "connect: TLS on 443" "0|1" connect 1.1.1.1 443 -- CONNECT TLS
 run "trace 8.8.8.8" "0|1" trace 8.8.8.8 -- TARGET
 run "outside-ip" 0 outside-ip -- OUTSIDE
+run "whois: an address, from RDAP" 0 whois 1.1.1.1 -- "SOURCE    RDAP" HOLDER NETWORK
+run "whois: an AS number, from RDAP" 0 whois AS13335 -- "SOURCE    RDAP" Cloudflare
+run "whois: a domain, from RDAP" 0 whois www.iana.org -- "SOURCE    RDAP" "asked as iana.org" REGISTRAR
+run "whois: a domain with no RDAP server (.de), from whois" 0 whois denic.de -- "SOURCE    whois" "not in RDAP"
+run "whois: a server given" 0 whois iana.org whois.iana.org -- "SOURCE    whois" "the server given"
+run "whois: a private address (no registry asked)" 0 whois 192.168.1.1 -- "RFC 1918"
+run "whois: not a thing to look up (bad usage)" 3 whois "not a name!"
 
 echo
 echo "=== shell (piped)"

@@ -24,7 +24,19 @@ import (
 var DPTUDPPorts = []DPTPortName{
 	{53, "dns", "udp"}, {69, "tftp", "udp"}, {80, "quic", "udp"}, {123, "ntp", "udp"},
 	{137, "netbios-ns", "udp"}, {161, "snmp", "udp"}, {443, "quic", "udp"}, {1900, "ssdp", "udp"},
-	{5353, "mdns", "udp"},
+	{1812, "radius", "udp"}, {1813, "radius-acct", "udp"}, {5353, "mdns", "udp"},
+}
+
+// radiusStatusServer is a RADIUS Status-Server (RFC 5997): code 12, with
+// the Message-Authenticator it must carry.  dpt knows no shared secret,
+// so a server that checks it drops the request: an open port is "no
+// answer" and only a closed one says so; a server that does answer is
+// open.
+func radiusStatusServer() []byte {
+	b := []byte{12, 0x44, 0, 38}
+	b = append(b, "dpt-radius-probe"...) // the Request Authenticator: 16 octets
+	b = append(b, 80, 18)                // Message-Authenticator
+	return append(b, make([]byte, 16)...)
 }
 
 // quicProbe is a QUIC Initial of a version no one speaks, padded to the
@@ -59,6 +71,9 @@ var udpProbes = map[int][]byte{
 		0x02, 0x02, 0x37, 0xf0, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00},
 	// SSDP (UPnP): search for anything
 	1900: []byte("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"),
+	// RADIUS: Status-Server, which authenticates no one
+	1812: radiusStatusServer(),
+	1813: radiusStatusServer(),
 	// mDNS: the services it offers, asked by unicast
 	5353: {0x44, 0x50, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
 		9, '_', 's', 'e', 'r', 'v', 'i', 'c', 'e', 's', 7, '_', 'd', 'n', 's', '-', 's', 'd',

@@ -96,6 +96,11 @@ TIME      time.google.com            +0.2 ms  s1  delay   27.8 ms  .GOOG.
 FEATURES  icmp dns/udp dns/tcp recursion edns0 dnssec dot(853)
 ```
 
+FEATURES is what the address offers, of what dpt tries: ping, DNS over
+UDP and TCP, recursion, EDNS0, DNSSEC validation, DNS over TLS (853),
+NTP, whois (43), RDAP (HTTPS, asked under the name when one is given),
+LDAP (389: an anonymous bind gets an LDAP answer) and LDAPS (636).
+
 `dpt info` reads what the machine already has, and sends NTP time
 requests: to Google, Microsoft, AWS, Apple and NIST (and the machine's
 own time server), to show how far off this clock is. It also asks
@@ -120,7 +125,7 @@ you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
 to let dpt choose); trydhcp and info then use it. From a script
 --select never asks: use `--iface`.
 
-## SMTP, sweep, ports, connect, trace, outside-ip
+## SMTP, sweep, ports, connect, trace, whois, outside-ip
 
 `dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start), 587
 (STARTTLS), and 2525 and 8025 (STARTTLS; providers like smtp2go offer them
@@ -188,14 +193,17 @@ names. `sweep ports` then tries the common ports of each live address.
 most /22). Addresses that drop pings (Windows' firewall does by default)
 are not listed. `dpt outside-ip` asks https://ifconfig.me/ip.
 
-`dpt ports <host>` tries 65 common TCP ports (including mail on 2525 and
-8025, and HTTPS on 1443, 2443 ... 14443) and 9 UDP services: DNS (53),
-TFTP (69), QUIC (80 and 443), NTP (123), NetBIOS (137), SNMP (161),
+`dpt ports <host>` tries 66 common TCP ports (including whois on 43,
+LDAP on 389 and 636, mail on 2525 and 8025, and HTTPS on 1443, 2443 ...
+14443) and 11 UDP services: DNS (53), TFTP (69), QUIC (80 and 443), NTP
+(123), NetBIOS (137), SNMP (161), RADIUS (1812, and accounting on 1813),
 SSDP (1900) and mDNS (5353). A UDP port is open only when it answers,
 so each is sent a real, harmless request of its own: a DNS query, an
 NTP time request, a QUIC packet of a version no one speaks (a QUIC
 server must answer with the versions it does), SNMPv3 discovery (no
-community string is guessed). Silence is "no answer": open and quiet,
+community string is guessed), a RADIUS Status-Server (no shared secret
+is guessed, so a RADIUS server that checks it stays silent: only a
+closed RADIUS port is told apart). Silence is "no answer": open and quiet,
 or dropped by a firewall. To try your own ports:
 `dpt ports mail.example.com 587,2525,8025`, ranges `8000-8010`, UDP with
 `/udp`: `53/udp,123/udp`.
@@ -223,6 +231,36 @@ show is a router too busy to answer, not loss; loss at the last hop is
 WARN. Some NATs (VirtualBox's) answer echoes on the address's behalf;
 then the address answers at hop 1 and dpt says the routers cannot be
 seen from here.
+
+`dpt whois <address | network | AS number | domain>` says who holds it.
+It asks RDAP first: IANA's lists say which registry's RDAP server holds
+it, and the answer is JSON, so every registry's is read and shown the
+same way. Where there is no RDAP server (some country domains: .de,
+.io, .jp...) or it does not answer, it asks whois (port 43): IANA, the
+server IANA refers to, then one referral from there (an RIR's, a
+domain's registrar). The first line says which answered:
+
+```
+$ dpt whois 1.1.1.1
+WHOIS     1.1.1.1
+SOURCE    RDAP  APNIC  rdap.apnic.net  in 1.2 s
+HOLDER    APNIC Research and Development
+NETWORK   APNIC-LABS  1.1.1.0 - 1.1.1.255  1.1.1.0/24  AU
+ABUSE     helpdesk@apnic.net
+DATES     registered 2011-08-10   changed 2023-04-26
+```
+
+A whois answer is text that each registry writes its own way; dpt reads
+the same summary from it and says so (`not in RDAP: no RDAP server for
+.de in IANA's list`). A domain shows its registrar, status, name
+servers, DNSSEC and dates; for `www.example.com` it asks for
+`example.com`, and then the registrar's own RDAP server, which holds the
+registrant. A private or documentation address is named as such, and no
+registry is asked. `dpt whois example.com whois.godaddy.com` asks that
+server only (`https://...` for an RDAP server), as `whois -h` does.
+`--verbose` adds every contact and remark, and a whois answer's text;
+`--json` gives the summary and the registry's RDAP answer itself.
+Windows has no whois of its own; this is the same on all six systems.
 
 A certificate that expires in under 30 days is WARN, in smtp and
 connect, with the days left.

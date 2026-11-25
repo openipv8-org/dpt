@@ -245,6 +245,8 @@ func (s *Shell) Do(line string) bool {
 		s.trace(args)
 	case cmd == "outside-ip":
 		s.outsideIP()
+	case cmd == "whois":
+		s.whois(args)
 	default:
 		// a lookup: <name> or <name> <server>
 		if len(f) > 2 {
@@ -317,6 +319,10 @@ dpt:
                           server says first; then type to it (Ctrl-D or Ctrl-C to close)
   trace [host]            the routers on the way, each hop asked 3 times, with times and loss
   outside-ip              the address the internet sees (asks ifconfig.me)
+  whois [what] [server]   who holds an address, network, AS number or domain (default the
+                          server): RDAP where it is, else whois; says which answered.
+                          server: ask that whois server (whois.godaddy.com) or RDAP one (https://...)
+                          only. whois <what> -v: every contact and remark, the whole whois text
   Tab completes commands, options and names
   help, ?                 this list
 `)
@@ -1019,6 +1025,8 @@ func (s *Shell) features(args []string) {
 		} else {
 			s.printf("  NTP                no\n")
 		}
+		s.printf("  whois TCP/43       %s\n  RDAP HTTPS/443     %s\n", yn(f.Whois), yn(f.RDAP))
+		s.printf("  LDAP TCP/389       %s\n  LDAPS TCP/636      %s\n", yn(f.LDAP), yn(f.LDAPS))
 	}
 	s.printf("\n")
 }

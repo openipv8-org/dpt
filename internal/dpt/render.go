@@ -417,6 +417,10 @@ func dptFeatureWords(f DPTFeatures) string {
 	add(f.EDNS0, "edns0")
 	add(f.DNSSEC, "dnssec")
 	add(f.DoT, "dot(853)")
+	add(f.Whois, "whois(43)")
+	add(f.RDAP, "rdap")
+	add(f.LDAP, "ldap(389)")
+	add(f.LDAPS, "ldaps(636)")
 	if f.NTP {
 		w = append(w, fmt.Sprintf("ntp(s%d)", f.Stratum))
 	}

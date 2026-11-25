@@ -11,6 +11,7 @@
 //	dpt connect <host> <port> [tls|notls]    connect, see what it says, type to it
 //	dpt trace <host>                         the routers on the way
 //	dpt outside-ip                           the address the internet sees
+//	dpt whois <address|network|AS|domain> [<server>]   who holds it: RDAP, else whois
 //	dpt                                      interactive shell: nslookup and more
 //
 // Test letters go together (t time, d DNS, p ping; none: all three).
@@ -162,7 +163,7 @@ func run(args []string) int {
 	case "install", "upgrade":
 		return runInstall(ctx, c.Mode, args, color)
 
-	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois":
 		if err := mel.Interface(true); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return exitMEL
@@ -432,7 +433,7 @@ func firstErr(errs ...error) error {
 	return nil
 }
 
-// runNet is smtp, sweep, ports, connect, trace and outside-ip.
+// runNet is smtp, sweep, ports, connect, trace, whois and outside-ip.
 func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt.Live) int {
 	out := func(v any, text func()) int {
 		if c.JSON {
@@ -586,6 +587,24 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		out(r, func() { dpt.RenderTrace(os.Stdout, r, color) })
 		if r.Status == dpt.DPTFail {
+			return exitFail
+		}
+		return exitOK
+
+	case "whois":
+		r, err := dpt.RunWhois(ctx, c.Target, dpt.WhoisOptions{Timeout: c.Opts.Timeout, Family: c.Opts.Family,
+			Agent: "dpt " + version, Server: c.WhoisServer, Live: l})
+		l.Stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dpt:", err)
+			return exitFail
+		}
+		more := "--verbose"
+		if runtime.GOOS == "windows" {
+			more = "/verbose"
+		}
+		out(r, func() { dpt.RenderWhois(os.Stdout, r, color, c.Verbose, more) })
+		if !r.Found && r.Special == "" {
 			return exitFail
 		}
 		return exitOK

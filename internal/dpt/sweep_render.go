@@ -51,7 +51,7 @@ func (p *SweepPrinter) Network(r *SweepReport) {
 	o.line("NETWORK", s)
 	what := "ping"
 	if r.Ports {
-		what = fmt.Sprintf("ping, then %d TCP and %d UDP ports of each", len(DPTTopPorts), len(DPTUDPPorts))
+		what = fmt.Sprintf("ping, then %d TCP and %d UDP ports each", len(DPTTopPorts), len(DPTUDPPorts))
 	}
 	o.line("", o.dim(fmt.Sprintf("%d addresses, 25 at a time: %s", r.Tried, what)))
 	if r.Ports && o.color {

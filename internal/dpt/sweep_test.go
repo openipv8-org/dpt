@@ -17,7 +17,7 @@ import (
 )
 
 func TestTopPorts(t *testing.T) {
-	if len(DPTTopPorts) != 65 {
+	if len(DPTTopPorts) != 66 {
 		t.Errorf("%d ports", len(DPTTopPorts))
 	}
 	seen := map[int]bool{}
