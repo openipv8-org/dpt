@@ -125,7 +125,7 @@ you choose: `dpt dhcp --select`, `dpt info --select`. In the shell,
 to let dpt choose); trydhcp and info then use it. From a script
 --select never asks: use `--iface`.
 
-## SMTP, sweep, ports, connect, trace, whois, outside-ip
+## SMTP, sweep, ports, connect, trace, whois, time native, outside-ip
 
 `dpt smtp <host>` tries 25 (STARTTLS), 465 (TLS from the start), 587
 (STARTTLS), and 2525 and 8025 (STARTTLS; providers like smtp2go offer them
@@ -261,6 +261,33 @@ server only (`https://...` for an RDAP server), as `whois -h` does.
 `--verbose` adds every contact and remark, and a whois answer's text;
 `--json` gives the summary and the registry's RDAP answer itself.
 Windows has no whois of its own; this is the same on all six systems.
+
+`dpt time native` runs the system's own time tools, so what they say can
+be set beside dpt's measurement: `w32tm /query /status` and
+`w32tm /stripchart` against time.cloudflare.com, time.google.com and
+time.windows.com on Windows; `sntp` against the same on macOS; `chronyc
+tracking` and `chronyc sources -v` (or `timedatectl`, or `ntpq -p`) on
+Linux. Each command is shown (`$ w32tm /query /status`) and runs when
+you press Enter; Ctrl-C stops. Last, dpt measures the clock itself:
+`dpt now: this clock is 452.1 ms behind (time.cloudflare.com +452.0 ms ...)`.
+
+`time native sync` resyncs now (`w32tm /resync /force`,
+`sudo sntp -sS time.apple.com`, `sudo chronyc makestep`), with dpt's
+measurement before and after. `time native sync fix` sets the system to
+keep its clock in sync: on Windows, Windows Time starts with Windows and
+syncs with time.cloudflare.com, time.google.com and time.windows.com
+every hour (a PC on no domain syncs once a week otherwise); on macOS,
+network time on, from time.apple.com; on Linux, the time service
+installed (chrony, systemd-timesyncd) is turned on, and nothing is
+changed when one runs. It says first that you should be the system admin
+to run it, and how to put things back, and waits for Enter. On a Windows
+PC joined to a domain it refuses, and changes nothing: such a PC MUST
+get its time from a domain controller, and one that does not can break
+the network's logins (Kerberos allows 5 minutes). `time native sync`
+there resyncs with the domain controller. The commands that need
+Administrator run with sudo on Linux and macOS; on Windows each is shown
+and waited for, then UAC is asked once for them, and their output comes
+back to the same window. From a script, `fix` never runs.
 
 A certificate that expires in under 30 days is WARN, in smtp and
 connect, with the days left.

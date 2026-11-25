@@ -30,7 +30,7 @@ const (
 
 // DPTCommand is a parsed dpt command line.
 type DPTCommand struct {
-	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "whois", "shell", "help", "version"
+	Mode   string // "dpt", "dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "connect", "trace", "outside-ip", "whois", "time", "shell", "help", "version"
 	Target string // dpt, smtp, ports: the address or name
 	// smtp <host> test <user> [<password>]: log in as User (Password ""
 	// is asked for)
@@ -44,6 +44,10 @@ type DPTCommand struct {
 	PortList []DPTPortName
 	// whois <query> [<server>]
 	WhoisServer string
+	// time native [sync [fix]]: TimeSync, TimeFix; TimeFrom, TimeTo: the
+	// elevated copy on Windows runs those steps only (dpt-steps=a-b)
+	TimeSync, TimeFix bool
+	TimeFrom, TimeTo  int
 	// connect <host> <port> [tls|notls]
 	ConnectPort       int
 	ConnectTLS, NoTLS bool
@@ -132,6 +136,10 @@ func DPTUsage(st DPTArgStyle, prog string) string {
 	fmt.Fprintf(&b, "                            who holds it: RDAP (the registry's JSON) where it is, else whois;\n")
 	fmt.Fprintf(&b, "                            says which answered (1.1.1.1, 2001:db8::/32, AS13335, example.com);\n")
 	fmt.Fprintf(&b, "                            server: ask that one only (whois.godaddy.com, or https://... for RDAP)\n")
+	fmt.Fprintf(&b, "       %s time native [sync [fix]]\n", prog)
+	fmt.Fprintf(&b, "                            the system's own time tools (w32tm, sntp, chronyc...), each command shown,\n")
+	fmt.Fprintf(&b, "                            run on Enter; sync: resync now (as admin); fix: set it to keep in sync\n")
+	fmt.Fprintf(&b, "                            (refused on a Windows PC on a domain: it takes its time from the domain)\n")
 	fmt.Fprintf(&b, "       %s install          put this dpt where the system finds it (%s)\n", prog, map[DPTArgStyle]string{DPTStyleWindows: `C:\Program Files\dpt, added to PATH`}[st]+map[bool]string{true: "/usr/local/bin"}[st != DPTStyleWindows])
 	fmt.Fprintf(&b, "       %s upgrade          download the newest release and install it\n", prog)
 	fmt.Fprintf(&b, "       %s                  interactive shell (nslookup and more)\n", prog)
@@ -309,7 +317,7 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New("info only reads this machine: it takes no tests")
 		}
-	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois":
+	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "time":
 		if c.Opts.Tests != (DPTTests{}) {
 			return nil, errors.New(c.Mode + " takes no test letters")
 		}
@@ -326,9 +334,12 @@ func ParseDPTArgs(args []string, st DPTArgStyle) (*DPTCommand, error) {
 }
 
 // dptModes are the words that choose a mode instead of naming a target.
-var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois"}
+var dptModes = []string{"dhcp", "info", "install", "upgrade", "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois", "time"}
 
-const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, install, upgrade"
+const dptModeList = "dhcp, info, smtp, sweep, ports, connect, trace, outside-ip, whois, time native, install, upgrade"
+
+// TimeUse is how time is written.
+const TimeUse = "time native [sync [fix]]"
 
 // words reads the words that are not options: a mode and its arguments,
 // or the target.
@@ -403,6 +414,29 @@ func (c *DPTCommand) words(pos []string) error {
 			return errors.New("trace <host>")
 		}
 		c.Target = rest[0]
+	case "time":
+		var words []string
+		for _, w := range rest {
+			if a, b, ok := strings.Cut(strings.TrimPrefix(strings.ToLower(w), "dpt-steps="), "-"); ok && strings.HasPrefix(strings.ToLower(w), "dpt-steps=") {
+				from, err1 := strconv.Atoi(a)
+				to, err2 := strconv.Atoi(b)
+				if err1 != nil || err2 != nil || from < 0 || to <= from {
+					return errors.New(TimeUse)
+				}
+				c.TimeFrom, c.TimeTo = from, to
+				continue
+			}
+			words = append(words, strings.ToLower(w))
+		}
+		switch strings.Join(words, " ") {
+		case "native":
+		case "native sync":
+			c.TimeSync = true
+		case "native sync fix":
+			c.TimeSync, c.TimeFix = true, true
+		default:
+			return errors.New(TimeUse + ": the system's own time tools (time native), a resync (sync), set to keep in sync (sync fix)")
+		}
 	case "whois":
 		if len(rest) < 1 || len(rest) > 2 {
 			return errors.New(WhoisUse)

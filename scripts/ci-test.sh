@@ -105,6 +105,9 @@ run "whois: a domain with no RDAP server (.de), from whois" 0 whois denic.de -- 
 run "whois: a server given" 0 whois iana.org whois.iana.org -- "SOURCE    whois" "the server given"
 run "whois: a private address (no registry asked)" 0 whois 192.168.1.1 -- "RFC 1918"
 run "whois: not a thing to look up (bad usage)" 3 whois "not a name!"
+run "time native: the system's own time tools, then dpt's measurement" "0|1" time native -- "TIME NATIVE" "\$ " "dpt now:"
+run "time native sync fix from a script (never changes anything unasked)" "0|3" time native sync fix -- "TIME NATIVE SYNC FIX"
+run "time native: a wrong word (bad usage)" 3 time native wrong
 
 echo
 echo "=== shell (piped)"

@@ -12,6 +12,7 @@
 //	dpt trace <host>                         the routers on the way
 //	dpt outside-ip                           the address the internet sees
 //	dpt whois <address|network|AS|domain> [<server>]   who holds it: RDAP, else whois
+//	dpt time native [sync [fix]]             the system's own time tools, a resync, set to keep in sync
 //	dpt                                      interactive shell: nslookup and more
 //
 // Test letters go together (t time, d DNS, p ping; none: all three).
@@ -40,6 +41,7 @@ import (
 	"openipv8.org/dpt/internal/selfinstall"
 	"openipv8.org/dpt/internal/shell"
 	"openipv8.org/dpt/internal/sysdns"
+	"openipv8.org/dpt/internal/timenative"
 )
 
 var version = "dev"
@@ -154,6 +156,15 @@ func run(args []string) int {
 		sh.Color = color
 		sh.Agent = "dpt " + version
 		sh.NewLive = live
+		sh.TimeNative = func(ctx context.Context, words []string, wait func(string) error) int {
+			a := append([]string{"time"}, words...)
+			tc, err := dpt.ParseDPTArgs(a, st)
+			if err != nil {
+				fmt.Fprintln(os.Stdout, "***", err)
+				return exitUsage
+			}
+			return timeNative(ctx, tc, a, color, false, wait)
+		}
 		if err := sh.Run(os.Stdin); err != nil {
 			fmt.Fprintln(os.Stderr, "dpt:", err)
 			return exitFail
@@ -162,6 +173,9 @@ func run(args []string) int {
 
 	case "install", "upgrade":
 		return runInstall(ctx, c.Mode, args, color)
+
+	case "time":
+		return runTimeNative(ctx, c, args, color, relayed)
 
 	case "smtp", "sweep", "ports", "outside-ip", "connect", "trace", "whois":
 		if err := mel.Interface(true); err != nil {
@@ -619,6 +633,50 @@ func runNet(ctx context.Context, c *dpt.DPTCommand, color bool, live func() *dpt
 		}
 		return out(r, func() { dpt.RenderOutsideIP(os.Stdout, r, color) })
 	}
+}
+
+// runTimeNative is time native [sync [fix]]: each command shown, run on
+// Enter.  On Windows the Administrator commands run in a copy of dpt that
+// UAC starts (dpt-steps=a-b), its output relayed here.
+func runTimeNative(ctx context.Context, c *dpt.DPTCommand, args []string, color, relayed bool) int {
+	var wait func(string) error
+	if elevate.Interactive() && !relayed {
+		in := bufio.NewReader(os.Stdin)
+		wait = func(prompt string) error {
+			fmt.Fprint(os.Stdout, prompt)
+			got := make(chan error, 1)
+			go func() { _, err := in.ReadString('\n'); got <- err }()
+			select {
+			case err := <-got:
+				return err
+			case <-ctx.Done():
+				fmt.Fprintln(os.Stdout)
+				return timenative.ErrStopped
+			}
+		}
+	}
+	return timeNative(ctx, c, args, color, relayed, wait)
+}
+
+// timeNative runs the plan c asks for; wait waits for Enter (nil: never).
+func timeNative(ctx context.Context, c *dpt.DPTCommand, args []string, color, relayed bool, wait func(string) error) int {
+	e := timenative.Detect()
+	p := timenative.Status(e)
+	switch {
+	case c.TimeFix:
+		p = timenative.Fix(e)
+	case c.TimeSync:
+		p = timenative.Sync(e)
+	}
+	o := timenative.Options{Out: os.Stdout, Color: color, From: c.TimeFrom, To: c.TimeTo,
+		Elevated: !elevate.Possible() || relayed, Wait: wait}
+	if runtime.GOOS == "windows" && !o.Elevated {
+		o.Elevate = func(from, to int) (int, error) {
+			a := append(append([]string{}, args...), fmt.Sprintf("dpt-steps=%d-%d", from, to))
+			return elevate.Run(p.What, a, color)
+		}
+	}
+	return timenative.Run(ctx, p, o)
 }
 
 // stdinHasData: stdin is a pipe or a file, not /dev/null or a console

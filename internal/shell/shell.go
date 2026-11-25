@@ -67,6 +67,9 @@ type Shell struct {
 	// NewLive, when set, starts the status line shown while a command
 	// works (a terminal); nil: none.
 	NewLive func() *dpt.Live
+	// TimeNative runs time native [sync [fix]] (words after "time"),
+	// waiting for Enter with wait (nil: not at a terminal); nil: not here.
+	TimeNative func(ctx context.Context, words []string, wait func(prompt string) error) int
 }
 
 func (s *Shell) live() *dpt.Live {
@@ -291,6 +294,10 @@ func (s *Shell) help() {
 dpt:
   ping [host] [count]     ICMP echo (default the server, 5)
   time [host]             NTP time of host (default ntpd, else the server) against the references
+  time native [sync [fix]]
+                          the system's own time tools (w32tm, sntp, chronyc...), each command
+                          shown and run on Enter; sync: resync now (as admin); sync fix: set the
+                          system to keep in sync (refused on a Windows PC on a domain)
   ntpd=<server>           the server time asks (set ntpd= clears it: the server)
   trydhcp [iface]         probe the segment for DHCP servers (needs sudo / an Administrator prompt)
   info                    this machine's DHCP lease, gateway, DNS and NTP servers, clock against time services,
@@ -938,6 +945,24 @@ func (s *Shell) ping(args []string) {
 }
 
 func (s *Shell) time(args []string) {
+	if len(args) > 0 && strings.EqualFold(args[0], "native") {
+		if s.TimeNative == nil {
+			s.printf("*** time native is not available here\n")
+			return
+		}
+		ctx, cancel := s.ctx()
+		defer cancel()
+		var wait func(string) error
+		if s.lr != nil && s.lr.tty {
+			wait = func(prompt string) error {
+				_, err := s.lr.Ask(prompt)
+				return err
+			}
+		}
+		s.TimeNative(ctx, args, wait)
+		s.printf("\n")
+		return
+	}
 	host := ""
 	switch {
 	case len(args) > 0:
